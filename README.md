@@ -4,12 +4,14 @@ Cotton market intelligence, pricing benchmarks, and buy-signal tooling for spinn
 
 ## Project structure
 
-- `cmi_mt_daily.ipynb`: Daily cotton price notebook. Loads the MacroTrends daily CSV, cleans the series, removes outliers, and visualizes the time series with Plotly.
-- `cmi_wb_monthly.ipynb`: Monthly / World Bank commodities notebook. Loads the World Bank monthly commodities Excel, reshapes headers, and provides a macro context around cotton.
-- `data_functions.py`: Shared data access helpers (FRED fetching, cotton CSV loader, World Bank commodities loader).
-- `util_functions.py`: Generic utilities for column search and Z-score based outlier handling.
-- `cotton_buy_tool.py`: Core buy-signal engine (benchmarks, CPI-adjusted prices, mill profile, suggested quantities).
-- `run_buy_signal.py`: Simple CLI entry point to run the buy-signal engine for a given mill profile.
+- `src/cotton_data.py`: external data loaders and basic metrics (MacroTrends daily, World Bank monthly, FRED CPI/PPI).
+- `src/mill_profile.py`: spinning mill representation and capacity/consumption logic.
+- `src/signals.py`: price benchmarks, CPI-adjusted prices, volatility, and buy/hold/avoid signal classification.
+- `src/decision_engine.py`: orchestration layer that combines data, signals, and mill profile into a single recommendation.
+- `scripts/run_buy_signal.py`: CLI entry point that runs the engine for an example mill and prints a human-readable summary.
+- `notebooks/cotton_exploration.ipynb`: curated notebook for exploration and presentations.
+- Legacy notebooks and helpers:
+  - `cmi_mt_daily.ipynb`, `cmi_wb_monthly.ipynb`, `data_functions.py`, `util_functions.py`, `cotton_buy_tool.py`, `run_buy_signal.py` (kept for reference but superseded by the `src/` modules).
 
 ## Setup
 
@@ -33,16 +35,31 @@ WB_COMMODITIES_DATA_FILE_URL=https://thedocs.worldbank.org/en/doc/5d903e848db1d1
 
 ## Usage
 
+### CLI (recommended entry point)
+
+1. Ensure `.env` is configured as below.
+2. From the repo root, run:
+
+```bash
+python -m scripts.run_buy_signal
+```
+
+This will:
+- Load daily cotton prices from the MacroTrends CSV.
+- Fetch CPI from FRED.
+- Compute benchmarks and classify a buy/hold/avoid signal.
+- Suggest a purchase quantity (bales and kg) for the example mill profile.
+
+### Notebook
+
 1. Start Jupyter (or VS Code / Cursor Jupyter support) in this repo.
-2. Open one of the notebooks:
-   - `cmi_mt_daily.ipynb` for daily price analysis.
-   - `cmi_wb_monthly.ipynb` for monthly macro/commodities context.
-3. Run all cells from top to bottom. The notebooks will:
-   - Load and clean the relevant data from the paths defined in `.env`.
-   - Use `data_functions.py` and `util_functions.py` to keep logic reusable.
-   - Produce interactive Plotly visualizations and tables for inspection.
+2. Open `notebooks/cotton_exploration.ipynb`.
+3. Run the cells to:
+   - Explore nominal vs real cotton prices.
+   - Visualize volatility regimes.
+   - Inspect the engine’s recommendations over time for a sample mill.
 
 ## Notes
 
 - `.env` is git-ignored and should never be committed; keep all secrets and local-only paths there.
-- The notebooks are intended for exploration, not production deployment, but the helpers in `data_functions.py` and `util_functions.py` are structured so they can be reused in future services or pipelines.
+- The new `src/` modules are the primary interface going forward; older helpers and notebooks are kept only for historical context and ad-hoc analysis.

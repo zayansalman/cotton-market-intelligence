@@ -1,6 +1,6 @@
-# cmi-notebooks
+# cotton-market-intelligence
 
-Cotton price predictions, analytics, and intelligence for business trading decisions. This repo contains Jupyter notebooks plus a small set of reusable Python helpers for proof-of-concept and exploratory analysis.
+Cotton market intelligence, pricing benchmarks, and buy-signal tooling for spinning mills. This repo contains Jupyter notebooks plus a small set of reusable Python helpers and scripts for proof-of-concept and exploratory analysis.
 
 ## Project structure
 
@@ -8,6 +8,8 @@ Cotton price predictions, analytics, and intelligence for business trading decis
 - `cmi_wb_monthly.ipynb`: Monthly / World Bank commodities notebook. Loads the World Bank monthly commodities Excel, reshapes headers, and provides a macro context around cotton.
 - `data_functions.py`: Shared data access helpers (FRED fetching, cotton CSV loader, World Bank commodities loader).
 - `util_functions.py`: Generic utilities for column search and Z-score based outlier handling.
+- `cotton_buy_tool.py`: Core buy-signal engine (benchmarks, CPI-adjusted prices, mill profile, suggested quantities).
+- `run_buy_signal.py`: Simple CLI entry point to run the buy-signal engine for a given mill profile.
 
 ## Setup
 

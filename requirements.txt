@@ -1,0 +1,8 @@
+python-dotenv
+pandas
+numpy
+pandas_datareader
+plotly
+matplotlib
+scipy
+scikit-learn

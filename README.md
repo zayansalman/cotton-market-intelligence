@@ -1,17 +1,35 @@
 # cotton-market-intelligence
 
-Cotton market intelligence, pricing benchmarks, and buy-signal tooling for spinning mills. This repo contains Jupyter notebooks plus a small set of reusable Python helpers and scripts for proof-of-concept and exploratory analysis.
+Cotton market intelligence and cotton buying decision support for spinning mills.
+
+This project exists to help mills answer three questions with quantified, auditable logic:
+- **Are we paying a good price?** (benchmarks vs history and real prices)
+- **Should we buy now or wait?** (rule-based buy signals with volatility filters)
+- **How much should we buy?** (mill capacity → daily consumption → order sizing)
+
+See the wiki for the full business case and operating model:
+- `wiki/Home.md`
+- `wiki/Business-Case.md`
+- `wiki/Business-Model.md`
 
 ## Project structure
 
-- `src/cotton_data.py`: external data loaders and basic metrics (MacroTrends daily, World Bank monthly, FRED CPI/PPI).
-- `src/mill_profile.py`: spinning mill representation and capacity/consumption logic.
-- `src/signals.py`: price benchmarks, CPI-adjusted prices, volatility, and buy/hold/avoid signal classification.
-- `src/decision_engine.py`: orchestration layer that combines data, signals, and mill profile into a single recommendation.
-- `scripts/run_buy_signal.py`: CLI entry point that runs the engine for an example mill and prints a human-readable summary.
-- `notebooks/cotton_exploration.ipynb`: curated notebook for exploration and presentations.
-- Legacy notebooks and helpers:
-  - `cmi_mt_daily.ipynb`, `cmi_wb_monthly.ipynb`, `data_functions.py`, `util_functions.py`, `cotton_buy_tool.py`, `run_buy_signal.py` (kept for reference but superseded by the `src/` modules).
+- **V1 decision stack (canonical)**
+  - `src/cotton_prices.py`: MacroTrends + World Bank + FRED CPI alignment and real price series.
+  - `src/benchmarks.py`: rolling percentiles, z-scores, volatility, and snapshots.
+  - `src/capacity.py`: spindle-based capacity → daily cotton tons → base order quantity.
+  - `src/buy_rules.py`: STRONG_BUY/BUY/HOLD/AVOID and quantity scaling.
+  - `src/config_loader.py`: load mill profiles and signal thresholds from YAML.
+  - `config/mill_profiles.yml`, `config/signals.yml`: configuration inputs.
+
+- **Demo and docs**
+  - `notebooks/cotton_v1_core_demo.ipynb`: end-to-end V1 demo.
+  - `scripts/visual_tool.py`: matplotlib dashboard and PNG export.
+  - `docs/TOOL_SCOPE_V1.md`: V1 scope and assumptions.
+
+- **Legacy engine (kept for reference)**
+  - `src/cotton_data.py`, `src/mill_profile.py`, `src/signals.py`, `src/decision_engine.py`
+  - `scripts/run_buy_signal.py`, `notebooks/cotton_exploration.ipynb`
 
 ## Setup
 
@@ -61,13 +79,19 @@ Renders a matplotlib dashboard: spot price, 1Y percentile band, current signal, 
 ### Notebook
 
 1. Start Jupyter (or VS Code / Cursor Jupyter support) in this repo.
-2. Open `notebooks/cotton_exploration.ipynb`.
-3. Run the cells to:
-   - Explore nominal vs real cotton prices.
-   - Visualize volatility regimes.
-   - Inspect the engine’s recommendations over time for a sample mill.
+2. Open `notebooks/cotton_v1_core_demo.ipynb` (V1) or `notebooks/cotton_exploration.ipynb` (legacy).
+3. Run the cells to explore prices, benchmarks, and buy decisions.
 
 ## Notes
 
 - `.env` is git-ignored and should never be committed; keep all secrets and local-only paths there.
 - The new `src/` modules are the primary interface going forward; older helpers and notebooks are kept only for historical context and ad-hoc analysis.
+
+## Compliance & auditability (practical)
+
+This is **decision support** tooling. It is designed to be auditable:
+- **Deterministic logic**: signals are produced by explicit code + YAML configs.
+- **Traceable inputs**: data sources and transformations are documented (see `docs/TOOL_SCOPE_V1.md`).
+- **Explainability**: decisions include the metrics used (percentiles, z-scores, vol, base quantity).
+
+If this evolves into a managed service, add: change control, model risk governance (if forecasts are introduced), data lineage, and access controls (principles aligned with FCA/BaFin/SEC expectations for controlled decision systems).

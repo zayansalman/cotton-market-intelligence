@@ -1,0 +1,15 @@
+---
+value:
+  buy_percentile: 0.25
+  strong_buy_percentile: 0.15
+momentum:
+  ma_window_short: 30
+  ma_window_long: 90
+volatility:
+  max_vol_30d_multiple_of_median: 2.0
+quantity_scalers:
+  strong_buy: 1.5
+  buy: 1.0
+  hold: 0.0
+  avoid: 0.0
+

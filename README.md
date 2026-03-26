@@ -50,6 +50,14 @@ This will:
 - Compute benchmarks and classify a buy/hold/avoid signal.
 - Suggest a purchase quantity (bales and kg) for the example mill profile.
 
+### Visual dashboard
+
+```bash
+python -m scripts.visual_tool
+```
+
+Renders a matplotlib dashboard: spot price, 1Y percentile band, current signal, suggested quantity (tons), and 30d volatility. Saves to `output/cotton_dashboard.png`. Requires `COTTON_DAILY_DATA_LOCAL_FILEPATH` in `.env` or data at `data/cotton_macrotrends_daily.csv`.
+
 ### Notebook
 
 1. Start Jupyter (or VS Code / Cursor Jupyter support) in this repo.

@@ -51,6 +51,7 @@ def compute_signal_components_for_date(
     components: Dict[str, float] = {
         "current_price": snapshot.get("current_price", float("nan")),
         "real_price_indexed": snapshot.get("real_price_indexed", float("nan")),
+        "value_pct_rank_252d": snapshot.get("value_pct_rank_252d", float("nan")),
         "pct_252d": snapshot.get("pct_252d", float("nan")),
         "pct_252d_p25": snapshot.get("pct_252d_p25", float("nan")),
         "pct_252d_p75": snapshot.get("pct_252d_p75", float("nan")),
@@ -73,7 +74,7 @@ def decide_buy(
     if config is None:
         config = SignalConfigV1()
 
-    pct_252d = components.get("pct_252d")
+    value_rank = components.get("value_pct_rank_252d")
     vol_30d = components.get("vol_30d")
     vol_median = components.get("vol_30d_median")
 
@@ -81,20 +82,23 @@ def decide_buy(
     reason: str
 
     # Default to HOLD if key metrics are missing.
-    if pct_252d is None or pd.isna(pct_252d):
+    if value_rank is None or pd.isna(value_rank):
         signal = "HOLD"
         reason = "Insufficient benchmark history; maintain normal purchasing cadence."
     else:
-        # Basic value-based rules.
-        if pct_252d <= config.value_strong_buy_percentile:
+        # Value-based rules on empirical percentile rank of spot in ~1Y window (0=cheap).
+        if value_rank <= config.value_strong_buy_percentile:
             signal = "STRONG_BUY"
-            reason = "Cotton spot price is in the cheapest historical band; build inventory aggressively."
-        elif pct_252d <= config.value_buy_percentile:
+            reason = "Spot is in the cheapest band vs 1Y history; build inventory aggressively."
+        elif value_rank <= config.value_buy_percentile:
             signal = "BUY"
-            reason = "Cotton spot price is relatively cheap; step up buying."
+            reason = "Spot is relatively cheap vs 1Y history; step up buying."
+        elif value_rank > 0.75:
+            signal = "AVOID"
+            reason = "Spot is expensive vs 1Y history; minimise new exposure."
         else:
             signal = "HOLD"
-            reason = "Cotton spot price is not particularly cheap; maintain cadence."
+            reason = "Spot is not particularly cheap vs 1Y history; maintain cadence."
 
         # Volatility filter: if realized volatility is very elevated, temper buying.
         if (

@@ -1,0 +1,23 @@
+{
+  "name": "CMI Notebooks (cloud IDE)",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true
+    }
+  },
+  "postCreateCommand": "pip install --user -r requirements.txt -r requirements-dashboard.txt && pip install --user pytest",
+  "forwardPorts": [8501],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter"
+      ]
+    }
+  },
+  "remoteEnv": {
+    "PYTHONPATH": "${containerWorkspaceFolder}"
+  }
+}

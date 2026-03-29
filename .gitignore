@@ -124,6 +124,8 @@ celerybeat.pid
 
 # Output
 output/
+artifacts/*
+!artifacts/.gitkeep
 
 # Environments
 .env

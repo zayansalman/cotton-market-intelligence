@@ -6,3 +6,4 @@ plotly
 matplotlib
 scipy
 scikit-learn
+PyYAML>=6.0

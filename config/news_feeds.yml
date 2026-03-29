@@ -1,0 +1,11 @@
+# RSS/Atom feeds for daily headline scan (cotton, ag, macro). Add licensed feeds in production.
+#
+# For Bengali / Bangladesh sources, add URLs here and set:
+#   CMI_HF_SENTIMENT_MODEL=nlptown/bert-base-multilingual-uncased-sentiment
+# so transformer sentiment matches script (FinBERT is English-first).
+feeds:
+  - name: USDA News
+    url: "https://www.usda.gov/rss/latest-news.xml"
+  # Example (replace with working feed URLs):
+  # - name: Bangladesh Press (BN)
+  #   url: "https://example.com/bn/feed.xml"

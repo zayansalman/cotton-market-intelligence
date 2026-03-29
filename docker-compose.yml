@@ -1,0 +1,29 @@
+# Run entirely in containers (no local Python required on your laptop).
+#
+#   docker compose up --build
+# Open http://localhost:8501
+#
+# With price data (mount your MacroTrends CSV):
+#   export COTTON_CSV=/path/to/cotton-prices-historical-chart-data.csv
+#   docker compose run --rm -e COTTON_DAILY_DATA_LOCAL_FILEPATH=/data/cotton.csv -v "$COTTON_CSV:/data/cotton.csv:ro" app python scripts/write_pipeline_snapshot.py -o /app/artifacts/pipeline_snapshot.json
+#   docker compose up
+#
+services:
+  dashboard:
+    build: .
+    image: cmi-notebooks-dashboard:latest
+    ports:
+      - "8501:8501"
+    environment:
+      - CMI_PIPELINE_SNAPSHOT=/app/artifacts/pipeline_snapshot.json
+      - COTTON_DAILY_DATA_LOCAL_FILEPATH=${COTTON_DAILY_DATA_LOCAL_FILEPATH:-}
+      - WB_COMMODITIES_DATA_LOCAL_FILEPATH=${WB_COMMODITIES_DATA_LOCAL_FILEPATH:-}
+      - GITHUB_REF=${GITHUB_REF:-}
+      - GITHUB_SHA=${GITHUB_SHA:-}
+    volumes:
+      - ./artifacts:/app/artifacts
+    command: >
+      streamlit run dashboard/app.py
+      --server.address=0.0.0.0
+      --server.port=8501
+      --server.headless=true

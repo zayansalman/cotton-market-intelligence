@@ -39,7 +39,9 @@ def compute_signal_components(
 ) -> Dict[str, float]:
     components: Dict[str, float] = {
         "current_price": float(price_row.get("cotton_spot_usd_per_lb", float("nan"))),
-        "pct_252d": float(benchmarks_row.get("pct_252d", float("nan"))),
+        "value_pct_rank_252d": float(
+            benchmarks_row.get("value_pct_rank_252d", float("nan"))
+        ),
         "z_90d": float(benchmarks_row.get("z_90d", float("nan"))),
         "z_252d": float(benchmarks_row.get("z_252d", float("nan"))),
         "vol_30d": float(benchmarks_row.get("vol_30d", float("nan"))),
@@ -55,23 +57,23 @@ def decide_buy(
     if config is None:
         config = SignalConfig()
 
-    pct_252d = components.get("pct_252d", float("nan"))
+    value_rank = components.get("value_pct_rank_252d", float("nan"))
     vol_30d = components.get("vol_30d", float("nan"))
     vol_30d_median = components.get("vol_30d_median", float("nan"))
     momentum_ok = bool(components.get("momentum_ok", True))
 
-    if pd.isna(pct_252d):
+    if pd.isna(value_rank):
         signal: BuySignal = "HOLD"
         reason = "Insufficient history for a percentile-based decision."
-    elif pct_252d <= config.value_strong_buy_percentile and momentum_ok:
+    elif value_rank <= config.value_strong_buy_percentile and momentum_ok:
         signal = "STRONG_BUY"
-        reason = "Price is in the cheapest band and momentum filter is supportive."
-    elif pct_252d <= config.value_buy_percentile and momentum_ok:
+        reason = "Spot is in the cheapest band vs 1Y history and momentum is supportive."
+    elif value_rank <= config.value_buy_percentile and momentum_ok:
         signal = "BUY"
-        reason = "Price is below value threshold and momentum is supportive."
-    elif pct_252d > 0.75:
+        reason = "Spot is below typical vs 1Y history and momentum is supportive."
+    elif value_rank > 0.75:
         signal = "AVOID"
-        reason = "Price is expensive versus history."
+        reason = "Spot is expensive vs 1Y history."
     else:
         signal = "HOLD"
         reason = "Mixed signals; keep regular cadence."
@@ -124,14 +126,15 @@ def generate_signal_for_date(
     snapshot = evaluate_spot_snapshot(df_with_benchmarks, as_of=as_of)
     components = {
         "current_price": snapshot.get("current_price", float("nan")),
-        "pct_252d": snapshot.get("pct_252d", float("nan")),
+        "value_pct_rank_252d": snapshot.get("value_pct_rank_252d", float("nan")),
         "z_90d": snapshot.get("z_90d", float("nan")),
         "z_252d": snapshot.get("z_252d", float("nan")),
         "vol_30d": snapshot.get("vol_30d", float("nan")),
     }
 
-    ma_short = row.get(f"ma_{(config.momentum_ma_short if config else 30)}d", float("nan"))
-    ma_long = row.get(f"ma_{(config.momentum_ma_long if config else 90)}d", float("nan"))
+    # Benchmarks expose ma_90d / ma_252d from z-score windows (see benchmarks_v1).
+    ma_short = row.get("ma_90d", float("nan"))
+    ma_long = row.get("ma_252d", float("nan"))
     if pd.notna(ma_short) and pd.notna(ma_long):
         components["momentum_ok"] = float(ma_short >= ma_long)
 

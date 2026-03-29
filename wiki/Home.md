@@ -29,4 +29,10 @@ See: `docs/TOOL_SCOPE_V1.md`.
   - `wiki/How-It-Works.md`
 - Visual tool:
   - `wiki/Visual-Tool.md`
+- Strategic procurement (tonnage over a forward horizon, signals + news + optional AI):
+  - `wiki/Strategic-Procurement.md`
+- Bangladesh / South Asia mills:
+  - `wiki/Bangladesh-Market.md`
+- Enterprise (branches, CI/CD, Docker dashboard — no local Python):
+  - `wiki/Enterprise-DLC.md`
 

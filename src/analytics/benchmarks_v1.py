@@ -27,6 +27,19 @@ def _rolling_percentile(series: pd.Series, window: int, q: float) -> pd.Series:
     )
 
 
+def _rolling_value_pct_rank_last(x: np.ndarray) -> float:
+    """
+    Fraction of observations in the window that are <= the last (today's) price.
+    Returns a number in [0, 1] (empirical CDF rank). NaN if insufficient data.
+    """
+    if x.size < 2:
+        return float("nan")
+    if np.any(np.isnan(x)):
+        return float("nan")
+    last = x[-1]
+    return float(np.sum(x <= last) / float(x.size))
+
+
 def compute_price_benchmarks(
     df: pd.DataFrame,
     config: BenchmarksConfig | None = None,
@@ -45,11 +58,17 @@ def compute_price_benchmarks(
     out = df.copy()
     price = out[price_col].astype(float)
 
-    # Rolling percentiles for price
+    # Rolling percentiles for price (price *levels* in $/lb — not rank of today)
     for w in config.percentile_windows:
         out[f"pct_{w}d"] = _rolling_percentile(price, window=w, q=0.5)
         out[f"pct_{w}d_p25"] = _rolling_percentile(price, window=w, q=0.25)
         out[f"pct_{w}d_p75"] = _rolling_percentile(price, window=w, q=0.75)
+        # Empirical percentile *rank* of today's price within the rolling window (0–1).
+        # Low = cheap vs recent history; high = expensive. Used for value-based signals.
+        out[f"value_pct_rank_{w}d"] = price.rolling(w).apply(
+            _rolling_value_pct_rank_last,
+            raw=True,
+        )
 
     # Rolling z-scores
     for w in config.zscore_windows:
@@ -108,6 +127,8 @@ def evaluate_spot_snapshot(
         "pct_756d",
         "pct_252d_p25",
         "pct_252d_p75",
+        "value_pct_rank_252d",
+        "value_pct_rank_756d",
         "z_90d",
         "z_252d",
         "vol_30d",

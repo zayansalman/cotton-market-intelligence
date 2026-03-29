@@ -2,9 +2,12 @@ python-dotenv
 pandas
 numpy
 pandas_datareader
-plotly
+plotly>=5.0
 matplotlib
 scipy
 scikit-learn
 PyYAML>=6.0
 openpyxl
+yfinance
+feedparser
+streamlit>=1.28

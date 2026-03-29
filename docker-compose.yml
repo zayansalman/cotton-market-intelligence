@@ -5,7 +5,7 @@
 #
 # With price data (mount your MacroTrends CSV):
 #   export COTTON_CSV=/path/to/cotton-prices-historical-chart-data.csv
-#   docker compose run --rm -e COTTON_DAILY_DATA_LOCAL_FILEPATH=/data/cotton.csv -v "$COTTON_CSV:/data/cotton.csv:ro" app python scripts/write_pipeline_snapshot.py -o /app/artifacts/pipeline_snapshot.json
+#   docker compose run --rm -e COTTON_DAILY_DATA_LOCAL_FILEPATH=/data/cotton.csv -v "$COTTON_CSV:/data/cotton.csv:ro" dashboard python scripts/write_pipeline_snapshot.py -o /app/artifacts/pipeline_snapshot.json
 #   docker compose up
 #
 services:

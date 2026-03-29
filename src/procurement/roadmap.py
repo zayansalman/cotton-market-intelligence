@@ -100,7 +100,7 @@ def build_procurement_roadmap(
     # News: shift mass earlier (positive tilt) or later (negative tilt)
     tilt = np.clip(news_timing_tilt, -1.0, 1.0)
     if abs(tilt) > 1e-6:
-        shift = np.exp(tilt * config.news_front_bias * (np.arange(n) - (n - 1) / 2.0))
+        shift = np.exp(-tilt * config.news_front_bias * (np.arange(n) - (n - 1) / 2.0))
         w = w * shift
 
     # High vol → dollar-cost-average (closer to uniform)

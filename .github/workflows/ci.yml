@@ -36,11 +36,15 @@ jobs:
           pip install -r requirements.txt pytest
 
       - name: Compile & smoke tests
+        env:
+          PYTHONPATH: "."
         run: |
           python -m compileall -q src
           pytest -q tests/
 
       - name: Write pipeline snapshot (no secret data)
+        env:
+          PYTHONPATH: "."
         run: |
           mkdir -p artifacts
           python scripts/write_pipeline_snapshot.py -o artifacts/pipeline_snapshot.json

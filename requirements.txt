@@ -1,6 +1,0 @@
-streamlit>=1.28
-pandas
-numpy
-plotly>=5.0
-yfinance
-feedparser

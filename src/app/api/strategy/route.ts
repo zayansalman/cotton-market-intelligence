@@ -41,6 +41,8 @@ interface StrategyRequest {
   months: number;
 }
 
+type StrategyProvider = "huggingface" | "openai" | "heuristic";
+
 function heuristicStrategy(
   bm: Benchmarks,
   tonnage: number,
@@ -121,7 +123,7 @@ function heuristicStrategy(
       `90-day change ${bm.change_90d_pct > 0 ? "+" : ""}${bm.change_90d_pct.toFixed(1)}%.\n\n` +
       `**Volatility**: ${vol.toFixed(1)}% annualized (30d). ` +
       `${vol > 30 ? "Elevated — spread purchases to reduce execution risk." : "Normal regime."}\n\n` +
-      `*Statistical heuristic. Connect OpenAI for full AI analysis with news interpretation and strategic depth.*`,
+      `*Statistical heuristic. Connect a configured AI provider (Hugging Face-first) for richer news interpretation and strategic depth.*`,
     monthly_plan: plan,
     risk_factors: [
       "Statistical heuristic only — no news or fundamental analysis.",
@@ -143,27 +145,22 @@ function heuristicStrategy(
       fair_value: Math.round(((bm.ma_50d + bm.ma_200d) / 2) * 10000) / 10000,
     },
     source: "heuristic",
+    provider: "heuristic",
   };
 }
 
-export async function POST(req: Request) {
-  try {
-    const body: StrategyRequest = await req.json();
-    const { benchmarks, headlines, company, tonnage, months } = body;
+function buildUserMessage(
+  benchmarks: Benchmarks,
+  headlines: Headline[],
+  company: string,
+  tonnage: number,
+  months: number
+): string {
+  const headlineSummary = headlines
+    .slice(0, 25)
+    .map((h) => ({ title: h.title, summary: h.summary.slice(0, 150) }));
 
-    const apiKey = process.env.OPENAI_API_KEY;
-
-    if (!apiKey) {
-      return NextResponse.json(
-        heuristicStrategy(benchmarks, tonnage, months)
-      );
-    }
-
-    const headlineSummary = headlines
-      .slice(0, 25)
-      .map((h) => ({ title: h.title, summary: h.summary.slice(0, 150) }));
-
-    const userMsg = `CURRENT MARKET DATA (Cotton #2 Futures):
+  return `CURRENT MARKET DATA (Cotton #2 Futures):
 ${JSON.stringify(benchmarks, null, 2)}
 
 RECENT NEWS HEADLINES:
@@ -176,49 +173,159 @@ CLIENT REQUIREMENT:
 - Implied monthly rate: ${Math.round(tonnage / months).toLocaleString()} tonnes/month
 
 Analyze the market and generate a procurement strategy for this client.`;
+}
 
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+function safeJsonParse(text: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function resolveProvider(): StrategyProvider {
+  const explicit = (process.env.STRATEGY_MODEL_PROVIDER ?? "auto")
+    .toLowerCase()
+    .trim();
+  const hasHf = Boolean(process.env.HF_TOKEN);
+  const hasOpenAi = Boolean(process.env.OPENAI_API_KEY);
+  const allowOpenAiFallback = process.env.ALLOW_OPENAI_FALLBACK === "1";
+
+  if (explicit === "huggingface") return hasHf ? "huggingface" : "heuristic";
+  if (explicit === "openai") return hasOpenAi ? "openai" : "heuristic";
+  if (explicit === "heuristic") return "heuristic";
+
+  // Auto mode: HF-first, OpenAI only if explicitly allowed.
+  if (hasHf) return "huggingface";
+  if (hasOpenAi && allowOpenAiFallback) return "openai";
+  return "heuristic";
+}
+
+async function runOpenAiStrategy(
+  userMsg: string,
+  apiKey: string
+): Promise<Strategy | null> {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userMsg },
+      ],
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  if (!res.ok) {
+    console.error("OpenAI error:", res.status, await res.text());
+    return null;
+  }
+
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content?.trim();
+  if (!text) return null;
+  const parsed = safeJsonParse(text);
+  if (!parsed) return null;
+  return {
+    ...(parsed as Omit<Strategy, "source" | "provider">),
+    source: "ai",
+    provider: "openai",
+  };
+}
+
+async function runHuggingFaceStrategy(
+  userMsg: string,
+  token: string
+): Promise<Strategy | null> {
+  const model =
+    process.env.HF_STRATEGY_MODEL ?? "Qwen/Qwen2.5-7B-Instruct";
+
+  const prompt =
+    `${SYSTEM_PROMPT}\n\n` +
+    "Return ONLY valid JSON.\n\n" +
+    userMsg;
+
+  const res = await fetch(
+    `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`,
+    {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userMsg },
-        ],
-        temperature: 0.3,
-        response_format: { type: "json_object" },
+        inputs: prompt,
+        parameters: {
+          max_new_tokens: 900,
+          temperature: 0.2,
+          return_full_text: false,
+        },
+        options: { wait_for_model: true },
       }),
-    });
+    }
+  );
 
-    if (!res.ok) {
-      console.error("OpenAI error:", res.status, await res.text());
-      return NextResponse.json(
-        heuristicStrategy(benchmarks, tonnage, months)
-      );
+  if (!res.ok) {
+    console.error("HF error:", res.status, await res.text());
+    return null;
+  }
+
+  const data = await res.json();
+  let text = "";
+  if (Array.isArray(data) && data[0]?.generated_text) {
+    text = String(data[0].generated_text).trim();
+  } else if (data?.generated_text) {
+    text = String(data.generated_text).trim();
+  } else {
+    console.error("HF unexpected payload:", data);
+    return null;
+  }
+
+  const parsed = safeJsonParse(text);
+  if (!parsed) return null;
+  return {
+    ...(parsed as Omit<Strategy, "source" | "provider">),
+    source: "ai",
+    provider: "huggingface",
+  };
+}
+
+export async function POST(req: Request) {
+  try {
+    const body: StrategyRequest = await req.json();
+    const { benchmarks, headlines, company, tonnage, months } = body;
+    const userMsg = buildUserMessage(
+      benchmarks,
+      headlines,
+      company,
+      tonnage,
+      months
+    );
+    const provider = resolveProvider();
+
+    if (provider === "huggingface" && process.env.HF_TOKEN) {
+      const strategy = await runHuggingFaceStrategy(userMsg, process.env.HF_TOKEN);
+      if (strategy) return NextResponse.json(strategy);
     }
 
-    const data = await res.json();
-    const text = data.choices[0].message.content.trim();
-
-    try {
-      const parsed = JSON.parse(text);
-      parsed.source = "ai";
-      return NextResponse.json(parsed as Strategy);
-    } catch {
-      const match = text.match(/\{[\s\S]*\}/);
-      if (match) {
-        const parsed = JSON.parse(match[0]);
-        parsed.source = "ai";
-        return NextResponse.json(parsed as Strategy);
-      }
-      return NextResponse.json(
-        heuristicStrategy(benchmarks, tonnage, months)
-      );
+    if (provider === "openai" && process.env.OPENAI_API_KEY) {
+      const strategy = await runOpenAiStrategy(userMsg, process.env.OPENAI_API_KEY);
+      if (strategy) return NextResponse.json(strategy);
     }
+
+    return NextResponse.json(heuristicStrategy(benchmarks, tonnage, months));
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });

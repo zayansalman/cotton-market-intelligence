@@ -58,4 +58,5 @@ export interface Strategy {
   next_actions: string[];
   key_levels?: KeyLevels;
   source: "ai" | "heuristic";
+  provider?: "huggingface" | "openai" | "heuristic";
 }

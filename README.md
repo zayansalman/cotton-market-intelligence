@@ -72,6 +72,23 @@ If no key is set, the app still works with statistical fallback logic.
 2. Deploy branch `develop` (or `main` for production)
 3. Add `OPENAI_API_KEY` in Vercel project environment variables
 
+## Development workflow (required)
+
+This project follows an issue-driven branching workflow:
+
+1. Create or pick a GitHub issue
+2. Branch from `develop` as:
+   - `feature/<issue-id>-<short-slug>`
+3. Implement in that feature branch
+4. Open PR to `develop` and link the issue
+5. Merge to `main` only through release PRs
+
+Example branch name:
+
+```bash
+feature/10-hf-model-strategy
+```
+
 ## Repo map (current)
 
 - `src/app/page.tsx` — main dashboard UI

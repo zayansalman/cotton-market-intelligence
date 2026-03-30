@@ -2,19 +2,33 @@
 
 This page reflects the **current production workflow** (Next.js + Vercel), not the old Docker/Streamlit setup.
 
-## Branch model
+## Branch model (policy)
 
 | Branch | Purpose |
 |---|---|
-| `main` | Production-ready branch |
-| `develop` | Active integration branch (current default for iteration) |
-| `feature/*` | Short-lived feature branches merged into `develop` |
+| `main` | Production-only branch (release merges only) |
+| `develop` | Integration branch (all feature PRs merge here first) |
+| `feature/*` | Short-lived, issue-driven branches |
 
-Recommended flow:
-1. Build in `feature/*`
-2. PR into `develop`
-3. Validate in preview / staging
-4. Merge `develop` → `main` for production release
+Mandatory flow:
+1. Create/confirm a GitHub issue first.
+2. Branch from `develop` using the issue number:
+   - `feature/<issue-id>-<short-slug>`
+   - Example: `feature/10-hf-model-strategy`
+3. Open PR from `feature/*` to `develop` with issue link.
+4. Require CI green before merge.
+5. Merge `develop` to `main` only for planned releases.
+
+Direct commits to `develop` should be avoided except urgent hotfixes.
+
+## PR and issue hygiene (policy)
+
+- Every PR must link at least one issue (`Closes #<id>` or `Refs #<id>`).
+- Every issue must define:
+  - problem statement
+  - expected outcome
+  - acceptance criteria
+- Keep one feature focus per branch/PR to preserve clean history.
 
 ## CI pipeline
 

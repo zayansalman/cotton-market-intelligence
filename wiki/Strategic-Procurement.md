@@ -1,46 +1,72 @@
-# Strategic procurement (roadmap)
+# Strategic Procurement (Current MVP)
 
-This layer answers a **commercial question**, not only “buy today or wait”:
+Core question:
 
-> *We need **X tonnes** of cotton in the next **Y months**. What is the month-by-month purchase plan, grounded in price signals, volatility, and recent headlines?*
+> We need **X tonnes** in **Y months**. What is the best month-by-month buying plan right now?
 
-## What it does
+## Live strategy behavior
 
-1. **Price intelligence** — Loads daily spot series, computes benchmarks (including **value percentile rank** vs rolling history, volatility, moving-average momentum).
-2. **Spot signal** — `STRONG_BUY` / `BUY` / `HOLD` / `AVOID` with a **near-term suggested order size** scaled by mill capacity (from `config/mill_profiles.yml`).
-3. **News digest** — Fetches RSS from `config/news_feeds.yml`. **Keyword** scan (transparent rules) is **blended** with **Hugging Face** sentiment (default: **ProsusAI/finbert** for financial tone). Install `requirements-ml.txt` for transformers. Optional **semantic re-ranking** (`CMI_HF_RELEVANCE=1`) uses `sentence-transformers` to prioritize cotton/commodity-relevant headlines. For **Bengali** feeds, set `CMI_HF_SENTIMENT_MODEL=nlptown/bert-base-multilingual-uncased-sentiment`. The combined score **tilts** roadmap timing (e.g. accelerate cover when flow skews tight / stressful).
-4. **Roadmap** — `src/procurement/roadmap.py` spreads the **full X tonnes** across months, blending:
-   - signal (front-load vs back-load),
-   - volatility (flatten toward a steadier pace when vol is high),
-   - news tilt.
-5. **Narrative** — `src/intelligence/synthesis.py` produces an executive summary and rationale. With **`OPENAI_API_KEY`** set, it can call OpenAI for a richer write-up; otherwise it uses deterministic heuristics (auditable, no API).
+The live app combines:
+1. **Price regime signals**
+2. **Volatility-aware pacing**
+3. **Current headline context**
+4. **AI reasoning (optional) with deterministic fallback**
 
-## How to run
+## Input
 
-1. Configure `.env` with at least `COTTON_DAILY_DATA_LOCAL_FILEPATH` pointing at the MacroTrends cotton CSV (same as the rest of the stack).
-2. Optional: `WB_COMMODITIES_DATA_LOCAL_FILEPATH` for World Bank alignment; `OPENAI_API_KEY` + `OPENAI_MODEL` (defaults in code) for LLM narrative.
-3. From repo root:
+- `company`
+- `tonnage`
+- `months`
+- Real-time price benchmarks
+- Current RSS headlines
 
-```bash
-python scripts/strategic_run.py --company "ACME Spinning" --tonnes 5000 --months 6
-```
+## Output
 
-JSON output for dashboards or logs:
+- Signal (`STRONG_BUY`, `BUY`, `HOLD`, `AVOID`)
+- Confidence score
+- Executive summary
+- Market analysis
+- Monthly purchase tranches (`month`, `%`, `tonnes`, rationale)
+- Risk factors
+- Next actions
+- Key levels (`support`, `fair_value`, `resistance`)
 
-```bash
-python scripts/strategic_run.py --tonnes 5000 --months 6 --json
-```
+## Decision framework
 
-## Code map
+### Signal logic (fallback path)
 
-| Piece | Location |
-|--------|-----------|
-| End-to-end orchestration | `src/strategic.py` |
-| Monthly tranches | `src/procurement/roadmap.py` |
-| RSS + sentiment | `src/intelligence/news.py` |
-| Narrative | `src/intelligence/synthesis.py` |
-| Value rank & benchmarks | `src/analytics/benchmarks_v1.py` (via `src/benchmarks.py`) |
+- **Cheap regime** (low percentile, negative z-score) → `BUY` or `STRONG_BUY`
+- **Expensive regime** (high percentile) → `AVOID`
+- **Middle regime** → `HOLD`
 
-## Governance
+### Roadmap shaping
 
-This remains **decision support**: deterministic rules and configs are the source of truth; LLM text is optional narration on top. For production, add data lineage, change control, and (if external news/APIs are used) licensing and latency SLAs.
+- `STRONG_BUY/BUY`: front-load purchases
+- `AVOID`: back-load purchases
+- High volatility: flatten allocations to reduce timing risk
+
+### AI enhancement
+
+When OpenAI is configured:
+- model receives structured market + headline context
+- returns structured JSON strategy for execution and audit trails
+- if AI fails, system reverts to deterministic path
+
+## Where this logic lives
+
+- `src/app/api/strategy/route.ts` — orchestration, AI call, fallback
+- `src/app/api/prices/route.ts` — benchmark calculations
+- `src/app/api/headlines/route.ts` — news ingestion
+
+## Operating guidance
+
+Treat this as **decision support**, not autopilot execution:
+- Keep procurement manager override authority
+- Log and review strategy outputs by date
+- Add approval gates for high-tonnage buys
+
+## Next upgrades
+
+- Basis-aware strategy (futures + local landed cost)
+- Supplier/lot constraints in optimization
+- Backtest mode for confidence calibration

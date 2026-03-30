@@ -1,25 +1,33 @@
-# Visual Tool
+# Visual Product (Current)
 
-The visual dashboard renders cotton price history, benchmark bands, and the current buy signal.
+The visual product is now the **web app**, not a Python plotting script.
 
-## Run
+## Live URL
+
+- [https://cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app)
+
+## What users see
+
+- Real-time cotton benchmark cards
+- Price history chart with 50d/200d moving averages
+- Buy/Hold/Avoid signal with confidence
+- Executive summary + market analysis
+- Month-by-month purchase roadmap (table + chart)
+- Risks and next actions
+- News headlines used for context
+- JSON export of full strategy output
+
+## Run locally
 
 ```bash
-python -m scripts.visual_tool
+npm install
+npm run dev
 ```
 
-## Output
+Open [http://localhost:3000](http://localhost:3000).
 
-- **File**: `output/cotton_dashboard.png`
-- **Contents**:
-  - Cotton spot price ($/lb) over time
-  - 1Y rolling p25–p75 band (shaded)
-  - 1Y median (dashed)
-  - Current signal badge (STRONG_BUY / BUY / HOLD / AVOID)
-  - Suggested quantity (tons)
-  - 30d rolling volatility (log returns)
+## API-backed UI
 
-## Requirements
-
-- `COTTON_DAILY_DATA_LOCAL_FILEPATH` in `.env` pointing to MacroTrends CSV, or
-- Data file at `data/cotton_macrotrends_daily.csv`
+- `/api/prices`
+- `/api/headlines`
+- `/api/strategy`

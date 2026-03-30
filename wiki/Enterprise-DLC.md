@@ -1,49 +1,57 @@
-# Enterprise DLC — branches, CI/CD, cloud execution
+# Enterprise DLC — current agile workflow
 
-This project is designed so **nobody needs a working Python install on a laptop** to run the verified stack: **Docker**, **GitHub Actions**, and optional **GitHub Codespaces** / cloud VMs.
+This page reflects the **current production workflow** (Next.js + Vercel), not the old Docker/Streamlit setup.
 
-## Branch model (Git Flow–style)
+## Branch model
 
 | Branch | Purpose |
-|--------|---------|
-| `main` | Production-ready; protected; only via PR from `develop` or release branches. |
-| `develop` | Integration; default target for feature PRs. |
-| `feature/*` | Short-lived work (e.g. `feature/bd-feeds`). Open PR → `develop`. |
-| `release/*` | Optional version freeze before merging to `main`. |
+|---|---|
+| `main` | Production-ready branch |
+| `develop` | Active integration branch (current default for iteration) |
+| `feature/*` | Short-lived feature branches merged into `develop` |
 
-**Enforcement:** Turn on branch protection in GitHub (required status checks: `CI / verify`, `CI / docker`).
+Recommended flow:
+1. Build in `feature/*`
+2. PR into `develop`
+3. Validate in preview / staging
+4. Merge `develop` → `main` for production release
 
-## CI/CD pipeline (`.github/workflows/ci.yml`)
+## CI pipeline
 
-1. **Checkout** — immutable commit SHA.
-2. **Verify** — `compileall`, `pytest`, generate `artifacts/pipeline_snapshot.json` **without** cotton CSV (stages show `skipped` for data-dependent steps).
-3. **Artifact** — Upload `pipeline-snapshot` ZIP for auditors / dashboard seeding.
-4. **Docker** — Build `Dockerfile` (dashboard image); cache via GitHub Actions cache.
+Current GitHub Actions (`.github/workflows/ci.yml`) does:
+- checkout
+- setup Node
+- `npm ci`
+- `npm run build`
 
-**Optional next steps (you enable in GitHub):**
+This guarantees the app compiles and all API/UI TypeScript checks pass.
 
-- Push image to GHCR on `main` (`docker push ghcr.io/<org>/cmi-dashboard:latest`).
-- Deploy dashboard to Cloud Run / ECS / AKS from that image.
-- Add secret `COTTON_DAILY_DATA` only in a **private** workflow if you want full snapshots in CI (usually keep data out of Git).
+## CD pipeline
 
-## Where the dashboard fits (visual “where we are”)
+CD is handled by Vercel:
+- push to connected branch triggers deployment automatically
+- branch deploys can be used for staging vs production
+- production alias currently points to:
+  - [https://cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app)
 
-- **Streamlit app:** `dashboard/app.py`
-- **Run in cloud:** `docker compose up` or deploy the same image to your host.
-- **Stage truth:** `src/pipeline_snapshot.py` produces JSON aligned with DLC stages: config → data → benchmarks → signal → news → roadmap → narrative.
+## Environment and secrets
 
-Each CI run refreshes the **snapshot artifact** so you can attach it to a release or load it into the dashboard via `CMI_PIPELINE_SNAPSHOT`.
+Set secrets in Vercel project settings:
+- `OPENAI_API_KEY` (optional but recommended)
+- `OPENAI_MODEL` (optional, default `gpt-4o-mini`)
 
-## Cloud IDE (no local install)
+No secrets should be committed to git.
 
-- **GitHub Codespaces:** open repo → “Create codespace” → uses `.devcontainer/devcontainer.json`.
-- **Docker only:** `docker compose up --build` from any machine with Docker Desktop / Engine.
+## Agile operating rhythm
 
-## Operational checklist
+Use short iteration loops:
+1. Ship a thin increment
+2. Validate with real mill users
+3. Capture feedback as issues
+4. Prioritize and repeat weekly
 
-- [ ] Branch protection on `main` + required CI checks  
-- [ ] Secrets only in GitHub / vault (never in repo)  
-- [ ] `HF_HOME` or model cache on persistent disk for ML images  
-- [ ] Dashboard behind SSO / VPN for internal mills  
+## Immediate engineering priorities
 
-See also: `wiki/Bangladesh-Market.md`, `wiki/Strategic-Procurement.md`.
+- Add Bangladesh-specific source feeds and local context overlays
+- Add strategy backtesting and confidence calibration
+- Add role-based workflow and approvals for high-value buys

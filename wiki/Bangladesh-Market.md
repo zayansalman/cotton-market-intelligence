@@ -1,24 +1,33 @@
 # Bangladesh spinning sector — product fit
 
-Bangladesh is one of the world’s largest **yarn and textile** producers; mills import **bulk cotton** (often USD-priced, letter-of-credit terms) and care about **ICE / USDA / weather / freight** narratives as much as local headlines.
+Bangladesh is one of the world’s largest yarn and textile hubs. Mills import cotton in size and face daily exposure to:
+- global futures movement
+- weather/supply shocks
+- FX and freight pressure
+- execution timing risk
 
-## How this stack maps
+The current CMI MVP is aligned to this reality.
 
-| Need | Feature |
-|------|---------|
-| **Price vs history** | Value percentile rank, vol-adjusted signals |
-| **When to lift cover** | Multi-month roadmap (tonnes by month) |
-| **Global news** | RSS + **FinBERT** (English financial tone) |
-| **Local / Bengali press** | Set `CMI_HF_SENTIMENT_MODEL=nlptown/bert-base-multilingual-uncased-sentiment` and add Bengali RSS in `config/news_feeds.yml` |
-| **Execution** | Near-term suggested tonnes from mill profile (spindles, inventory days) |
+## How the current product maps
 
-## Deployment notes (production)
+| Mill need | Current capability |
+|---|---|
+| Price context | 1Y/5Y percentile, z-score, vol, MA regime |
+| Buy timing | `STRONG_BUY/BUY/HOLD/AVOID` signal engine |
+| Procurement planning | Month-by-month tonnage roadmap |
+| Market context | Live RSS headlines surfaced with strategy |
+| Decision communication | Executive summary, risks, next actions |
 
-- **Hardware**: CPU inference is enough for daily batch runs; use **GPU** (`CMI_HF_DEVICE=cuda`) if you batch many mills on one server.
-- **Caching**: Point `HF_HOME` (and `TRANSFORMERS_CACHE`) to a persistent volume so models are not re-downloaded.
-- **Data**: Add **licensed** news APIs or exchange feeds alongside RSS for coverage; keep HF as a **layer**, not the only input.
-- **Governance**: Bank-style mills will want **audit logs** (`plan_to_dict` JSON), fixed configs, and optional sign-off on tranche changes.
+## Gaps to close for Bangladesh depth
 
-## Commercial wedge
+1. Add local landed cost layer (futures + basis + freight + FX)
+2. Add port/logistics disruption signals
+3. Add supplier-specific constraints and lead times
+4. Add multi-mill view for group procurement teams
 
-Sell **decision support + audit trail**: deterministic rules + transparent NLP blend + optional OpenAI narrative — not a black-box “AI trader.”
+## Commercial positioning
+
+Position CMI as:
+- **decision support with auditability**, not autopilot trading
+- fast strategic guidance for procurement heads
+- a planning layer that can integrate with ERP/treasury workflows

@@ -1,146 +1,93 @@
-# cotton-market-intelligence
+# Cotton Market Intelligence (CMI)
 
-Cotton market intelligence and cotton buying decision support for spinning mills.
+Production MVP for cotton procurement intelligence, deployed on Vercel.
 
-This project exists to help mills answer three questions with quantified, auditable logic:
-- **Are we paying a good price?** (benchmarks vs history and real prices)
-- **Should we buy now or wait?** (rule-based buy signals with volatility filters)
-- **How much should we buy?** (mill capacity → daily consumption → order sizing)
+**Live app:** [https://cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app)
 
-See the wiki for the full business case and operating model:
-- `wiki/Home.md`
-- `wiki/Business-Case.md`
-- `wiki/Business-Model.md`
-- `wiki/Strategic-Procurement.md` (multi-month purchase roadmap)
-- `wiki/Enterprise-DLC.md` (branches, CI/CD, Docker — **no local Python required**)
+CMI helps a spinning mill answer:
+1. Is cotton currently cheap or expensive vs recent history?
+2. Should we buy now, phase buys, or delay?
+3. If we need X tonnes in Y months, what is the month-by-month buy roadmap?
 
-## Project structure
+## Current architecture (live)
 
-- **V1 decision stack (canonical)**
-  - `src/cotton_prices.py`: MacroTrends + World Bank + FRED CPI alignment and real price series.
-  - `src/benchmarks.py`: rolling percentiles, z-scores, volatility, and snapshots.
-  - `src/capacity.py`: spindle-based capacity → daily cotton tons → base order quantity.
-  - `src/buy_rules.py`: STRONG_BUY/BUY/HOLD/AVOID and quantity scaling.
-  - `src/config_loader.py`: load mill profiles and signal thresholds from YAML.
-  - `config/mill_profiles.yml`, `config/signals.yml`: configuration inputs.
+- **Frontend:** Next.js (App Router) + React + Tailwind
+- **Backend:** Next.js API routes (server-side)
+- **Charts:** Recharts
+- **Hosting:** Vercel
+- **CI:** GitHub Actions (`npm ci` + `npm run build`)
 
-- **Strategic procurement (multi-month roadmap)**
-  - `src/strategic.py`: orchestrates benchmarks → buy signal → news digest → monthly tranche plan → narrative.
-  - `src/procurement/roadmap.py`: allocates total tonnes across months using signal, volatility, and news tilt.
-  - `src/intelligence/`: RSS headlines, optional **Hugging Face** sentiment (`src/intelligence/hf_nlp.py`, `requirements-ml.txt`), optional OpenAI narrative (`OPENAI_API_KEY`).
-  - `config/news_feeds.yml`: RSS URLs for daily scan.
-  - `scripts/strategic_run.py`: CLI for “X tonnes in Y months”.
-  - `wiki/Strategic-Procurement.md`: business + technical overview.
+## What the app does today
 
-- **Demo and docs**
-  - `notebooks/cotton_v1_core_demo.ipynb`: end-to-end V1 demo.
-  - `notebooks/strategic_procurement_demo.ipynb`: roadmap + narrative demo.
-  - `scripts/visual_tool.py`: matplotlib dashboard and PNG export.
-  - `docs/TOOL_SCOPE_V1.md`: V1 scope and assumptions.
+### 1) Price intelligence (`/api/prices`)
+- Pulls Cotton #2 futures (`CT=F`) from Yahoo Finance
+- Computes:
+  - 1Y/5Y percentile rank
+  - 1Y z-score
+  - 30d/90d annualized volatility
+  - 50d and 200d moving averages
+  - 30d/90d momentum
 
-- **Legacy engine (kept for reference)**
-  - `src/cotton_data.py`, `src/mill_profile.py`, `src/signals.py`, `src/decision_engine.py`
-  - `scripts/run_buy_signal.py`, `notebooks/cotton_exploration.ipynb`
+### 2) News ingestion (`/api/headlines`)
+- Pulls RSS headlines from cotton/agri sources
+- Surfaces latest headlines as context for decisions
 
-## Setup
+### 3) Strategy generation (`/api/strategy`)
+- Inputs: company name, required tonnes, horizon months, live benchmarks, headlines
+- Output:
+  - Signal: `STRONG_BUY | BUY | HOLD | AVOID`
+  - Confidence score
+  - Executive summary
+  - Market analysis
+  - Monthly purchase plan (tonnes + % per month)
+  - Risks and next actions
+  - Key levels (support, fair value, resistance)
+- **AI mode:** uses OpenAI if `OPENAI_API_KEY` is configured
+- **Fallback mode:** deterministic heuristic strategy (no API key needed)
 
-1. Create and activate a virtual environment (Python 3.10+ recommended).
-2. Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-3. **Optional (recommended for production NLP):** Hugging Face sentiment + optional relevance ranking:
+## Run locally
 
 ```bash
-pip install -r requirements-ml.txt
+npm install
+npm run dev
 ```
 
-Sets `CMI_USE_HF_NLP` implicitly on when `transformers` is importable. Override with `CMI_USE_HF_NLP=0` for keyword-only. See `src/intelligence/hf_nlp.py` and `wiki/Strategic-Procurement.md`.
+Open [http://localhost:3000](http://localhost:3000).
 
-4. Create a `.env` file (copy from `.env.example`) with any paths or URLs you need, for example:
+### Optional env vars
+
+Create `.env.local`:
 
 ```bash
-# Local file paths
-COTTON_DAILY_DATA_LOCAL_FILEPATH=/path/to/cotton-prices-historical-chart-data.csv
-WB_COMMODITIES_DATA_LOCAL_FILEPATH=/path/to/CMO-Historical-Data-Monthly.xlsx
-
-# Optional: remote World Bank URL
-WB_COMMODITIES_DATA_FILE_URL=https://thedocs.worldbank.org/en/doc/5d903e848db1d1b83e0ec8f744e55570-0350012021/related/CMO-Historical-Data-Monthly.xlsx
+OPENAI_API_KEY=your_key_here
+OPENAI_MODEL=gpt-4o-mini
 ```
 
-## Usage
+If no key is set, the app still works with statistical fallback logic.
 
-### CLI (recommended entry point)
+## Deploy
 
-1. Ensure `.env` is configured as below.
-2. From the repo root, run:
+### Vercel (recommended)
+1. Import this repo in Vercel
+2. Deploy branch `develop` (or `main` for production)
+3. Add `OPENAI_API_KEY` in Vercel project environment variables
 
-```bash
-python -m scripts.run_buy_signal
-```
+## Repo map (current)
 
-This will:
-- Load daily cotton prices from the MacroTrends CSV.
-- Fetch CPI from FRED.
-- Compute benchmarks and classify a buy/hold/avoid signal.
-- Suggest a purchase quantity (bales and kg) for the example mill profile.
+- `src/app/page.tsx` — main dashboard UI
+- `src/app/api/prices/route.ts` — market data + benchmarks
+- `src/app/api/headlines/route.ts` — RSS ingestion
+- `src/app/api/strategy/route.ts` — AI + heuristic strategy engine
+- `src/components/*` — charts, cards, signal UI
+- `.github/workflows/ci.yml` — build verification
 
-### Visual dashboard
+## Roadmap (next)
 
-```bash
-python -m scripts.visual_tool
-```
+- Add Bangladesh-specific data feeds and basis overlays
+- Add multi-mill scenario comparison
+- Add backtesting / decision replay mode
+- Add alerting (email/WhatsApp/Slack) on signal changes
 
-Renders a matplotlib dashboard: spot price, 1Y percentile band, current signal, suggested quantity (tons), and 30d volatility. Saves to `output/cotton_dashboard.png`. Requires `COTTON_DAILY_DATA_LOCAL_FILEPATH` in `.env` or data at `data/cotton_macrotrends_daily.csv`.
+## Documentation
 
-### Strategic procurement (X tonnes in Y months)
-
-From the repo root, with `COTTON_DAILY_DATA_LOCAL_FILEPATH` in `.env` (or pass `--csv`):
-
-```bash
-python scripts/strategic_run.py --company "ACME Spinning" --tonnes 5000 --months 6
-```
-
-Add `--json` for machine-readable output. Optional: set `OPENAI_API_KEY` for richer narrative text.
-
-### Notebook
-
-1. Start Jupyter (or VS Code / Cursor Jupyter support) in this repo.
-2. Open `notebooks/cotton_v1_core_demo.ipynb` (V1), `notebooks/strategic_procurement_demo.ipynb` (roadmap), or `notebooks/cotton_exploration.ipynb` (legacy).
-3. Run the cells to explore prices, benchmarks, and buy decisions.
-
-### Cloud-first: Docker + pipeline dashboard (no local Python)
-
-If you **cannot run Python locally**, use Docker or CI only:
-
-```bash
-# Build and open Streamlit UI at http://localhost:8501
-docker compose up --build
-```
-
-- **Pipeline dashboard:** `dashboard/app.py` — shows DLC stages (config → data → benchmarks → signal → news → roadmap → narrative) and loads `artifacts/pipeline_snapshot.json` when present.
-- **Snapshot file (for CI / audit):** `python scripts/write_pipeline_snapshot.py -o artifacts/pipeline_snapshot.json` (after `pip install -r requirements.txt` in any environment with the repo checked out — or run the same job in GitHub Actions).
-- **CI/CD:** `.github/workflows/ci.yml` runs `pytest`, `compileall`, writes the snapshot, uploads it as an artifact, and builds the Docker image on every push and PR.
-- **Branches & governance:** see `wiki/Enterprise-DLC.md` (`main` / `develop` / `feature/*`, required checks).
-- **GitHub Codespaces:** `.devcontainer/devcontainer.json` for a browser-based IDE with Docker.
-
-```bash
-make docker-build   # image only
-make ci-local         # compile + tests (needs Python)
-```
-
-## Notes
-
-- `.env` is git-ignored and should never be committed; keep all secrets and local-only paths there.
-- The new `src/` modules are the primary interface going forward; older helpers and notebooks are kept only for historical context and ad-hoc analysis.
-
-## Compliance & auditability (practical)
-
-This is **decision support** tooling. It is designed to be auditable:
-- **Deterministic logic**: signals are produced by explicit code + YAML configs.
-- **Traceable inputs**: data sources and transformations are documented (see `docs/TOOL_SCOPE_V1.md`).
-- **Explainability**: decisions include the metrics used (percentiles, z-scores, vol, base quantity).
-
-If this evolves into a managed service, add: change control, model risk governance (if forecasts are introduced), data lineage, and access controls (principles aligned with FCA/BaFin/SEC expectations for controlled decision systems).
+See `wiki/Home.md` for current capability summary and planning pages.

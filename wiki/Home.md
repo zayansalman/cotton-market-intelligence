@@ -1,38 +1,47 @@
 # Cotton Market Intelligence Wiki
 
-This wiki explains **why this project exists**, **what it does**, and **how it creates value** for spinning mills.
+This wiki describes the **current live MVP** running on Vercel and the next steps in the product roadmap.
 
-## Why this exists
+## Live status
 
-Spinning mills often buy cotton with limited decision support:
-- Price context is hard to quantify (cheap/expensive vs history, real vs nominal).
-- Purchases happen in volatile regimes without a consistent policy.
-- Quantity decisions are not tied to spindle capacity and target inventory coverage.
+- **Production URL:** [https://cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app)
+- **Stack:** Next.js + TypeScript + Vercel
+- **Mode:** AI-assisted strategy generation with deterministic fallback
 
-This project turns those choices into a **repeatable, auditable process**.
+## What is live now
 
-## What the tool delivers (V1)
+1. **Market benchmarks**
+   - Cotton #2 futures via Yahoo Finance
+   - 1Y/5Y percentile, z-score, volatility, moving averages, momentum
 
-- **Benchmarks**: percentiles, z-scores, inflation-adjusted prices, rolling volatility.
-- **Buy signal**: STRONG_BUY / BUY / HOLD / AVOID from explicit rule logic.
-- **Quantity**: base order quantity derived from mill capacity and inventory policy, scaled by signal strength.
-- **Visual output**: a simple dashboard to share internally.
+2. **News layer**
+   - RSS ingestion from cotton/agri sources
+   - Headline context shown in dashboard and included in strategy request
 
-See: `docs/TOOL_SCOPE_V1.md`.
+3. **Procurement strategy engine**
+   - Input: company, required tonnes, horizon months
+   - Output: signal (`STRONG_BUY/BUY/HOLD/AVOID`), confidence, rationale, monthly roadmap, risks, actions
+   - Uses OpenAI when configured; falls back to deterministic heuristic logic
 
-## Where to start
+4. **Operator dashboard**
+   - Price chart + moving averages
+   - Signal badge and analysis text
+   - Monthly purchase allocation (chart + table)
+   - Download strategy JSON
 
-- Business framing:
-  - `wiki/Business-Case.md`
-  - `wiki/Business-Model.md`
-- How it works:
-  - `wiki/How-It-Works.md`
-- Visual tool:
-  - `wiki/Visual-Tool.md`
-- Strategic procurement (tonnage over a forward horizon, signals + news + optional AI):
-  - `wiki/Strategic-Procurement.md`
-- Bangladesh / South Asia mills:
-  - `wiki/Bangladesh-Market.md`
-- Enterprise (branches, CI/CD, Docker dashboard — no local Python):
-  - `wiki/Enterprise-DLC.md`
+## Architecture pages
+
+- `wiki/How-It-Works.md` — current technical flow
+- `wiki/Strategic-Procurement.md` — strategy logic and decision framing
+- `wiki/Enterprise-DLC.md` — agile workflow, CI/CD, branch model
+
+## Context pages
+
+- `wiki/Business-Case.md`
+- `wiki/Business-Model.md`
+- `wiki/Bangladesh-Market.md`
+
+## Notes
+
+Older docs describing Python CLI / Docker / Streamlit are superseded by the current Vercel stack.
 

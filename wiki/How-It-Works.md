@@ -1,42 +1,84 @@
-# How It Works (V1)
+# How It Works (Current MVP)
 
-This page explains the V1 data → benchmarks → signal → quantity pipeline.
+This page explains the live flow in the Vercel/Next.js app.
 
-## Data inputs
+## End-to-end flow
 
-- **Cotton spot (MacroTrends CSV)**: daily $/lb series
-- **CPI (FRED)**: used for inflation-adjusted (real) price series
-- Optional: **World Bank Cotton A Index** (monthly, forward-filled to daily)
+1. **Fetch market prices** (`/api/prices`)
+2. **Compute benchmarks** (percentiles, z-score, volatility, moving averages, momentum)
+3. **Fetch headlines** (`/api/headlines`)
+4. **Generate procurement strategy** (`/api/strategy`)
+5. **Render dashboard** (`src/app/page.tsx`)
 
-## Benchmarks
+## 1) Market data
 
-Computed on daily history:
-- Rolling percentiles (e.g. 1Y and 3Y)
-- Rolling z-scores (e.g. 90D and 252D)
-- Rolling volatility (e.g. 30D and 90D)
-- Real price and indexed real price
+Source:
+- Yahoo Finance chart endpoint for Cotton #2 futures (`CT=F`)
 
-## Mill capacity → base quantity
+Normalization:
+- Converts cent quotes to $/lb when needed
+- Filters null values
+- Produces a clean time series for charting + analytics
 
-Using spindle count, RPM, yarn count (Ne), efficiency, shifts/day, and waste factor:
-- Estimate daily cotton consumption (tons/day)
-- Convert target days of inventory + buys per year into a base order size (tons/buy)
+## 2) Benchmark engine
 
-## Buy decision
+From price history, the app computes:
+- 1Y and 5Y percentile rank
+- 1Y z-score
+- 30d and 90d annualized volatility
+- 50d and 200d moving averages
+- 30d and 90d momentum
+- 1Y high and low
 
-Signal categories:
-- `STRONG_BUY`, `BUY`, `HOLD`, `AVOID`
+These metrics drive signal generation and roadmap pacing.
 
-Rules (configurable):
-- **Value**: buy more when the price is in a cheap percentile band
-- **Volatility filter**: slow down buying if realized volatility is elevated
-- Quantity = base quantity × signal multiplier
+## 3) News ingestion
 
-## Outputs
+RSS feeds are fetched server-side and parsed into:
+- title
+- summary
+- link
+- published timestamp
 
-- A decision object containing:
-  - signal
-  - reasons
-  - suggested quantity
-  - underlying benchmark metrics (for auditability)
+News is used as context in AI strategy generation and displayed in the UI.
+
+## 4) Strategy logic
+
+Input parameters:
+- company
+- required tonnes
+- horizon (months)
+- current benchmarks
+- current headlines
+
+### AI mode
+
+If `OPENAI_API_KEY` exists:
+- sends structured prompt + current market/news context
+- expects strict JSON response with signal + monthly plan + risks/actions
+
+### Fallback mode
+
+If no API key or AI call fails:
+- deterministic heuristic computes:
+  - signal (`STRONG_BUY`, `BUY`, `HOLD`, `AVOID`)
+  - confidence
+  - monthly allocation weights
+  - key levels and action list
+
+## 5) Dashboard output
+
+The UI displays:
+- price chart with MA overlays
+- current signal + confidence
+- executive summary and market analysis
+- month-by-month tonnage roadmap (table + chart)
+- risk factors and next actions
+- downloadable strategy JSON
+
+## Auditable behavior
+
+- All core calculations are explicit in code
+- Fallback path remains deterministic
+- API responses are structured and inspectable
 

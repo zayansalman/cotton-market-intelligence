@@ -118,7 +118,8 @@ export async function GET() {
     };
 
     const response: PricesResponse = {
-      prices: prices.slice(-500),
+      // Keep ~5 years so UI can offer buyer-friendly time windows.
+      prices: prices.slice(-1260),
       benchmarks,
     };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type {
   PricesResponse,
   Headline,
@@ -24,6 +24,9 @@ export default function Home() {
   const [tonnage, setTonnage] = useState(5000);
   const [months, setMonths] = useState(6);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [timeframe, setTimeframe] = useState<
+    "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL"
+  >("1Y");
 
   useEffect(() => {
     async function load() {
@@ -86,6 +89,20 @@ export default function Home() {
   }, [priceData, headlines, company, tonnage, months]);
 
   const bm = priceData?.benchmarks;
+  const displayedPrices = useMemo(() => {
+    if (!priceData?.prices?.length) return [];
+    const points = priceData.prices;
+    const map: Record<Exclude<typeof timeframe, "ALL">, number> = {
+      "3M": 63,
+      "6M": 126,
+      "1Y": 252,
+      "3Y": 756,
+      "5Y": 1260,
+    };
+    if (timeframe === "ALL") return points;
+    const n = map[timeframe];
+    return points.slice(-Math.min(n, points.length));
+  }, [priceData, timeframe]);
 
   if (loading) {
     return (
@@ -258,10 +275,36 @@ export default function Home() {
 
           {/* Price chart */}
           {priceData && (
-            <PriceChart
-              prices={priceData.prices}
-              benchmarks={priceData.benchmarks}
-            />
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs text-zinc-500 mr-1 uppercase tracking-wider">
+                  Timeframe
+                </p>
+                {(["3M", "6M", "1Y", "3Y", "5Y", "ALL"] as const).map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setTimeframe(tf)}
+                    className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                      timeframe === tf
+                        ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                        : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {tf}
+                  </button>
+                ))}
+                {displayedPrices.length > 0 && (
+                  <span className="text-xs text-zinc-500 ml-2">
+                    {displayedPrices[0].date} to{" "}
+                    {displayedPrices[displayedPrices.length - 1].date}
+                  </span>
+                )}
+              </div>
+              <PriceChart
+                prices={displayedPrices}
+                benchmarks={priceData.benchmarks}
+              />
+            </div>
           )}
 
           {/* Strategy results */}

@@ -10,6 +10,7 @@ import {
   Tooltip,
   Legend,
   ReferenceLine,
+  Brush,
 } from "recharts";
 import type { PricePoint, Benchmarks } from "@/lib/types";
 
@@ -96,6 +97,13 @@ export default function PriceChart({
             strokeDasharray="2 4"
             dot={false}
             connectNulls
+          />
+          <Brush
+            dataKey="date"
+            height={24}
+            stroke="#666"
+            travellerWidth={10}
+            tickFormatter={(v: string) => v.slice(5)}
           />
         </ComposedChart>
       </ResponsiveContainer>

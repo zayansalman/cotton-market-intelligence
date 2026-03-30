@@ -40,6 +40,11 @@ Current GitHub Actions (`.github/workflows/ci.yml`) does:
 
 This guarantees the app compiles and all API/UI TypeScript checks pass.
 
+Additionally, PRs run `.github/workflows/ai-review.yml`:
+- AI-agent review comment on each PR
+- Hugging Face-first review path (requires `HF_TOKEN` secret)
+- Non-blocking fallback if token/model is unavailable
+
 ## CD pipeline
 
 CD is handled by Vercel:
@@ -56,6 +61,9 @@ Set secrets in Vercel project settings:
 
 No secrets should be committed to git.
 
+Set secrets in GitHub repository settings:
+- `HF_TOKEN` (for AI PR review workflow)
+
 ## Agile operating rhythm
 
 Use short iteration loops:
@@ -69,3 +77,11 @@ Use short iteration loops:
 - Add Bangladesh-specific source feeds and local context overlays
 - Add strategy backtesting and confidence calibration
 - Add role-based workflow and approvals for high-value buys
+
+## Enforcement note
+
+Branch protection enforcement (required checks/reviews) depends on repository plan/features.
+If protection settings are unavailable on the current plan, keep policy enforced operationally via:
+- PR template
+- mandatory issue linkage
+- CI + AI review workflows on every PR

@@ -1,0 +1,124 @@
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-agent-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build PR diff snapshot
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          git diff --unified=0 "$BASE_SHA" "$HEAD_SHA" > pr.diff
+          python - <<'PY'
+          from pathlib import Path
+          diff = Path("pr.diff").read_text(encoding="utf-8", errors="ignore")
+          # Keep token usage controlled.
+          Path("pr.diff").write_text(diff[:30000], encoding="utf-8")
+          PY
+
+      - name: Generate AI review (Hugging Face)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          diff = Path("pr.diff").read_text(encoding="utf-8", errors="ignore")
+          out = Path("ai_review.md")
+
+          if not diff.strip():
+              out.write_text(
+                  "## AI Review (Agent)\n\nNo code diff detected for review.\n",
+                  encoding="utf-8",
+              )
+              raise SystemExit(0)
+
+          if not os.getenv("HF_TOKEN"):
+              out.write_text(
+                  "## AI Review (Agent)\n\n"
+                  "HF token not configured (`HF_TOKEN` secret missing), so AI review was skipped.\n\n"
+                  "### To enable\n"
+                  "- Add repository secret `HF_TOKEN`\n"
+                  "- Re-run this workflow on the PR\n",
+                  encoding="utf-8",
+              )
+              raise SystemExit(0)
+
+          prompt = (
+              "You are an expert code reviewer. Review this PR diff with focus on:\n"
+              "1) bugs/regressions\n"
+              "2) edge cases\n"
+              "3) security/data leakage risks\n"
+              "4) performance concerns\n"
+              "5) missing tests\n\n"
+              "Return concise markdown with:\n"
+              "- Overall risk: LOW/MEDIUM/HIGH\n"
+              "- Findings (ordered by severity)\n"
+              "- Suggested follow-ups\n\n"
+              "If no major issue, explicitly say so.\n\n"
+              f"PR diff:\n{diff}"
+          )
+
+          payload = {
+              "inputs": prompt,
+              "parameters": {"max_new_tokens": 700, "temperature": 0.2},
+              "options": {"wait_for_model": True},
+          }
+
+          req = urllib.request.Request(
+              "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-Coder-32B-Instruct",
+              data=json.dumps(payload).encode(),
+              headers={
+                  "Authorization": f"Bearer {os.environ['HF_TOKEN']}",
+                  "Content-Type": "application/json",
+              },
+          )
+
+          try:
+              with urllib.request.urlopen(req, timeout=120) as resp:
+                  raw = json.loads(resp.read())
+              if isinstance(raw, list) and raw and "generated_text" in raw[0]:
+                  text = raw[0]["generated_text"]
+              elif isinstance(raw, dict) and "generated_text" in raw:
+                  text = raw["generated_text"]
+              else:
+                  text = f"Model returned unexpected payload:\n\n```json\n{json.dumps(raw)[:2500]}\n```"
+          except Exception as e:
+              text = (
+                  "AI review call failed.\n\n"
+                  f"Error: `{e}`\n\n"
+                  "Fallback recommendation: run manual review and rerun workflow."
+              )
+
+          out.write_text("## AI Review (Agent)\n\n" + text, encoding="utf-8")
+          PY
+
+      - name: Post AI review comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('ai_review.md', 'utf8');
+            const pr = context.payload.pull_request.number;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr,
+              body
+            });
+

@@ -60,3 +60,39 @@ export interface Strategy {
   source: "ai" | "heuristic";
   provider?: "huggingface" | "openai" | "heuristic";
 }
+
+export interface LandedCostAssumptions {
+  futures_usd_lb: number;
+  basis_cents_lb: number;
+  freight_usd_t: number;
+  insurance_pct: number;
+  duty_pct: number;
+  fx_bdt_usd: number;
+  wastage_pct: number;
+}
+
+export interface LandedCostBreakdown {
+  cotton_usd_t: number;
+  freight_usd_t: number;
+  insurance_usd_t: number;
+  duty_usd_t: number;
+  pre_wastage_usd_t: number;
+  effective_usd_t: number;
+  effective_bdt_kg: number;
+}
+
+export interface LandedCostPoint {
+  futures_usd_lb: number;
+  effective_usd_t: number;
+  effective_bdt_kg: number;
+}
+
+export interface LandedCostResponse {
+  assumptions: LandedCostAssumptions;
+  breakdown: LandedCostBreakdown;
+  sensitivity: {
+    low_1y: LandedCostPoint;
+    current: LandedCostPoint;
+    high_1y: LandedCostPoint;
+  };
+}

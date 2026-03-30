@@ -6,11 +6,13 @@ import type {
   Headline,
   Strategy,
   Benchmarks,
+  LandedCostResponse,
 } from "@/lib/types";
 import PriceChart from "@/components/PriceChart";
 import RoadmapChart from "@/components/RoadmapChart";
 import SignalBadge from "@/components/SignalBadge";
 import MetricCard from "@/components/MetricCard";
+import LandedCostCard from "@/components/LandedCostCard";
 
 export default function Home() {
   const [priceData, setPriceData] = useState<PricesResponse | null>(null);
@@ -27,6 +29,12 @@ export default function Home() {
   const [timeframe, setTimeframe] = useState<
     "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL"
   >("1Y");
+  const [landedCost, setLandedCost] = useState<LandedCostResponse | null>(null);
+  const [landedCostLoading, setLandedCostLoading] = useState(false);
+  const [basisCentsLb, setBasisCentsLb] = useState(7);
+  const [freightUsdT, setFreightUsdT] = useState(85);
+  const [fxBdtUsd, setFxBdtUsd] = useState(117);
+  const bm = priceData?.benchmarks;
 
   useEffect(() => {
     async function load() {
@@ -53,6 +61,33 @@ export default function Home() {
     }
     load();
   }, []);
+
+  useEffect(() => {
+    async function loadLandedCost() {
+      if (!bm) return;
+      setLandedCostLoading(true);
+      try {
+        const params = new URLSearchParams({
+          futures_usd_lb: String(bm.current_price),
+          low_futures_usd_lb: String(bm.low_1y),
+          high_futures_usd_lb: String(bm.high_1y),
+          basis_cents_lb: String(basisCentsLb),
+          freight_usd_t: String(freightUsdT),
+          fx_bdt_usd: String(fxBdtUsd),
+        });
+        const res = await fetch(`/api/landed-cost?${params.toString()}`);
+        if (res.ok) {
+          setLandedCost(await res.json());
+        }
+      } catch {
+        // Landed cost is additive insight; avoid blocking primary strategy flow.
+      } finally {
+        setLandedCostLoading(false);
+      }
+    }
+
+    loadLandedCost();
+  }, [bm, basisCentsLb, freightUsdT, fxBdtUsd]);
 
   const generateStrategy = useCallback(async () => {
     if (!priceData) return;
@@ -88,7 +123,6 @@ export default function Home() {
     }
   }, [priceData, headlines, company, tonnage, months]);
 
-  const bm = priceData?.benchmarks;
   const displayedPrices = useMemo(() => {
     if (!priceData?.prices?.length) return [];
     const points = priceData.prices;
@@ -271,6 +305,19 @@ export default function Home() {
                 deltaColor={bm.above_ma_200d ? "green" : "red"}
               />
             </div>
+          )}
+
+          {bm && (
+            <LandedCostCard
+              data={landedCost}
+              loading={landedCostLoading}
+              basisCentsLb={basisCentsLb}
+              setBasisCentsLb={setBasisCentsLb}
+              freightUsdT={freightUsdT}
+              setFreightUsdT={setFreightUsdT}
+              fxBdtUsd={fxBdtUsd}
+              setFxBdtUsd={setFxBdtUsd}
+            />
           )}
 
           {/* Price chart */}

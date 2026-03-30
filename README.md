@@ -80,6 +80,28 @@ Provider routing behavior:
 2. Deploy branch `develop` (or `main` for production)
 3. Add `OPENAI_API_KEY` in Vercel project environment variables
 
+### Enterprise deploy lanes (recommended)
+
+- **Dev lane:** `develop` branch -> `cmi-notebooks-dev.vercel.app`
+- **Prod lane:** `main` branch -> `cmi-notebooks.vercel.app`
+
+GitHub Actions workflows:
+- `.github/workflows/deploy-dev.yml`
+- `.github/workflows/deploy-prod.yml`
+
+Required GitHub repository secrets:
+
+```bash
+VERCEL_TOKEN
+VERCEL_ORG_ID
+VERCEL_PROJECT_ID_DEV
+VERCEL_PROJECT_ID_PROD
+```
+
+Recommended governance:
+- set GitHub Environment `production` with required approvers
+- use release PRs (`develop` -> `main`) before production deployment
+
 ## Development workflow (required)
 
 This project follows an issue-driven branching workflow:

@@ -47,11 +47,21 @@ Additionally, PRs run `.github/workflows/ai-review.yml`:
 
 ## CD pipeline
 
-CD is handled by Vercel:
-- push to connected branch triggers deployment automatically
-- branch deploys can be used for staging vs production
-- production alias currently points to:
-  - [https://cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app)
+CD is split into two explicit lanes:
+
+### Dev lane
+- Branch: `develop`
+- Workflow: `.github/workflows/deploy-dev.yml`
+- Project: `cmi-notebooks-dev`
+- URL: [https://cmi-notebooks-dev.vercel.app](https://cmi-notebooks-dev.vercel.app)
+
+### Prod lane
+- Branch: `main` (and manual dispatch)
+- Workflow: `.github/workflows/deploy-prod.yml`
+- Project: `cmi-notebooks`
+- URL: [https://cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app)
+
+This separates integration velocity from production stability.
 
 ## Environment and secrets
 
@@ -63,6 +73,10 @@ No secrets should be committed to git.
 
 Set secrets in GitHub repository settings:
 - `HF_TOKEN` (for AI PR review workflow)
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID_DEV`
+- `VERCEL_PROJECT_ID_PROD`
 
 ## Agile operating rhythm
 
@@ -85,3 +99,8 @@ If protection settings are unavailable on the current plan, keep policy enforced
 - PR template
 - mandatory issue linkage
 - CI + AI review workflows on every PR
+- separate dev/prod deployment workflows
+
+For production-grade governance, configure GitHub Environment protection:
+- `development` environment: no approvals
+- `production` environment: required approvers + restricted deployment branches (`main`)

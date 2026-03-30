@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import type { Benchmarks, Headline, Strategy, MonthlyPlan } from "@/lib/types";
+import type {
+  Benchmarks,
+  Headline,
+  Strategy,
+  MonthlyPlan,
+  LandedCostResponse,
+} from "@/lib/types";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -39,6 +45,7 @@ interface StrategyRequest {
   company: string;
   tonnage: number;
   months: number;
+  landedCost?: LandedCostResponse | null;
 }
 
 type StrategyProvider = "huggingface" | "openai" | "heuristic";
@@ -46,7 +53,8 @@ type StrategyProvider = "huggingface" | "openai" | "heuristic";
 function heuristicStrategy(
   bm: Benchmarks,
   tonnage: number,
-  months: number
+  months: number,
+  landedCost?: LandedCostResponse | null
 ): Strategy {
   const rank = bm.pct_rank_1y;
   const z = bm.z_score_1y;
@@ -102,6 +110,8 @@ function heuristicStrategy(
   const above50 = bm.above_ma_50d ? "above" : "below";
   const above200 = bm.above_ma_200d ? "above" : "below";
   const px = bm.current_price;
+  const landedBdtKg = landedCost?.breakdown.effective_bdt_kg ?? null;
+  const landedUsdT = landedCost?.breakdown.effective_usd_t ?? null;
 
   const summaries: Record<string, string> = {
     STRONG_BUY: `Price at $${px.toFixed(4)}/lb is historically cheap (${(rank * 100).toFixed(0)}% of 1Y range). Prioritise building inventory now.`,
@@ -110,10 +120,15 @@ function heuristicStrategy(
     HOLD: `Price at $${px.toFixed(4)}/lb is mid-range (${(rank * 100).toFixed(0)}% of 1Y range). Maintain baseline procurement cadence.`,
   };
 
+  const landedSummary =
+    landedBdtKg != null && landedUsdT != null
+      ? ` Current landed cost estimate is Tk ${landedBdtKg.toFixed(2)}/kg (~$${landedUsdT.toFixed(0)}/t effective).`
+      : "";
+
   return {
     signal,
     confidence,
-    executive_summary: summaries[signal],
+    executive_summary: summaries[signal] + landedSummary,
     market_analysis:
       `**Price context**: $${px.toFixed(4)}/lb sits at the ${(rank * 100).toFixed(0)}% percentile of its ` +
       `1-year range ($${bm.low_1y.toFixed(4)} – $${bm.high_1y.toFixed(4)}). ` +
@@ -123,6 +138,10 @@ function heuristicStrategy(
       `90-day change ${bm.change_90d_pct > 0 ? "+" : ""}${bm.change_90d_pct.toFixed(1)}%.\n\n` +
       `**Volatility**: ${vol.toFixed(1)}% annualized (30d). ` +
       `${vol > 30 ? "Elevated — spread purchases to reduce execution risk." : "Normal regime."}\n\n` +
+      (landedBdtKg != null && landedUsdT != null
+        ? `**Bangladesh landed cost**: Effective cotton cost is approximately Tk ${landedBdtKg.toFixed(2)}/kg ` +
+          `(~$${landedUsdT.toFixed(0)}/t) under current basis, freight, FX, insurance, duty, and wastage assumptions.\n\n`
+        : "") +
       `*Statistical heuristic. Connect a configured AI provider (Hugging Face-first) for richer news interpretation and strategic depth.*`,
     monthly_plan: plan,
     risk_factors: [
@@ -135,7 +154,12 @@ function heuristicStrategy(
         : []),
     ],
     next_actions: [
-      "Connect OpenAI API key for AI-powered analysis.",
+      "Set HF_TOKEN to enable AI-powered analysis (Hugging Face-first).",
+      ...(landedBdtKg != null
+        ? [
+            `Run margin check versus yarn realization using Tk ${landedBdtKg.toFixed(2)}/kg landed cotton.`,
+          ]
+        : []),
       "Verify quality/count mix and wastage assumptions.",
       "Align roadmap with credit limits and warehouse capacity.",
     ],
@@ -154,11 +178,18 @@ function buildUserMessage(
   headlines: Headline[],
   company: string,
   tonnage: number,
-  months: number
+  months: number,
+  landedCost?: LandedCostResponse | null
 ): string {
   const headlineSummary = headlines
     .slice(0, 25)
     .map((h) => ({ title: h.title, summary: h.summary.slice(0, 150) }));
+  const landedCostSection = landedCost
+    ? `\n\nBANGLADESH LANDED COST CONTEXT:
+${JSON.stringify(landedCost, null, 2)}
+
+Use landed cost context in your recommendation quality where relevant.`
+    : "";
 
   return `CURRENT MARKET DATA (Cotton #2 Futures):
 ${JSON.stringify(benchmarks, null, 2)}
@@ -172,7 +203,7 @@ CLIENT REQUIREMENT:
 - Horizon: ${months} months
 - Implied monthly rate: ${Math.round(tonnage / months).toLocaleString()} tonnes/month
 
-Analyze the market and generate a procurement strategy for this client.`;
+Analyze the market and generate a procurement strategy for this client.${landedCostSection}`;
 }
 
 function safeJsonParse(text: string): Record<string, unknown> | null {
@@ -305,13 +336,14 @@ async function runHuggingFaceStrategy(
 export async function POST(req: Request) {
   try {
     const body: StrategyRequest = await req.json();
-    const { benchmarks, headlines, company, tonnage, months } = body;
+    const { benchmarks, headlines, company, tonnage, months, landedCost } = body;
     const userMsg = buildUserMessage(
       benchmarks,
       headlines,
       company,
       tonnage,
-      months
+      months,
+      landedCost
     );
     const provider = resolveProvider();
 
@@ -325,7 +357,9 @@ export async function POST(req: Request) {
       if (strategy) return NextResponse.json(strategy);
     }
 
-    return NextResponse.json(heuristicStrategy(benchmarks, tonnage, months));
+    return NextResponse.json(
+      heuristicStrategy(benchmarks, tonnage, months, landedCost)
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });

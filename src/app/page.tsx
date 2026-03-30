@@ -102,6 +102,7 @@ export default function Home() {
           company,
           tonnage,
           months,
+          landedCost,
         }),
       });
       if (res.ok) {
@@ -121,7 +122,7 @@ export default function Home() {
     } finally {
       setGenerating(false);
     }
-  }, [priceData, headlines, company, tonnage, months]);
+  }, [priceData, headlines, company, tonnage, months, landedCost]);
 
   const displayedPrices = useMemo(() => {
     if (!priceData?.prices?.length) return [];

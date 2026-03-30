@@ -28,6 +28,12 @@ const SIGNAL_STYLES: Record<
 
 export default function SignalBadge({ strategy }: { strategy: Strategy }) {
   const s = SIGNAL_STYLES[strategy.signal];
+  const providerLabel =
+    strategy.provider === "huggingface"
+      ? "HF"
+      : strategy.provider === "openai"
+        ? "OpenAI"
+        : null;
   return (
     <div
       className={`${s.bg} border-l-4 ${s.border} rounded-lg p-5 my-4`}
@@ -41,7 +47,7 @@ export default function SignalBadge({ strategy }: { strategy: Strategy }) {
         </span>
         {strategy.source === "ai" && (
           <span className="text-xs bg-violet-500/20 text-violet-300 px-2 py-0.5 rounded-full">
-            AI-powered
+            AI-powered{providerLabel ? ` (${providerLabel})` : ""}
           </span>
         )}
         {strategy.source === "heuristic" && (

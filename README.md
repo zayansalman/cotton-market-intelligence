@@ -61,9 +61,17 @@ Create `.env.local`:
 ```bash
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-4o-mini
+HF_TOKEN=your_huggingface_token_here
+HF_STRATEGY_MODEL=Qwen/Qwen2.5-7B-Instruct
+STRATEGY_MODEL_PROVIDER=auto
+ALLOW_OPENAI_FALLBACK=0
 ```
 
-If no key is set, the app still works with statistical fallback logic.
+Provider routing behavior:
+- `STRATEGY_MODEL_PROVIDER=auto` (default): Hugging Face first, then heuristic (OpenAI only if `ALLOW_OPENAI_FALLBACK=1`)
+- `STRATEGY_MODEL_PROVIDER=huggingface`: force HF path (falls back to heuristic if unavailable)
+- `STRATEGY_MODEL_PROVIDER=openai`: force OpenAI path (falls back to heuristic if unavailable)
+- `STRATEGY_MODEL_PROVIDER=heuristic`: deterministic only
 
 ## Deploy
 

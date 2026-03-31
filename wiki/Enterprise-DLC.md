@@ -94,6 +94,15 @@ Use short iteration loops:
 - Add strategy backtesting and confidence calibration
 - Add role-based workflow and approvals for high-value buys
 
+## Active V3 issue program: price prediction
+
+Execution is tracked in GitHub issues:
+- Epic: [#23](https://github.com/zayansalman/cotton-market-intelligence/issues/23)
+- Child issues: [#24](https://github.com/zayansalman/cotton-market-intelligence/issues/24) to [#32](https://github.com/zayansalman/cotton-market-intelligence/issues/32)
+
+Detailed sequencing and deliverables:
+- `wiki/Price-Prediction-Roadmap.md`
+
 ## Enforcement note
 
 Branch protection enforcement (required checks/reviews) depends on repository plan/features.

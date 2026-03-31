@@ -167,8 +167,30 @@ feature/10-hf-model-strategy
 - Add backtesting / decision replay mode
 - Add alerting (email/WhatsApp/Slack) on signal changes
 
+## V3 price prediction program (open issues)
+
+Goal: deliver institutional-grade cotton price prediction using quantitative + qualitative drivers, with strict backtesting, current accuracy rating, and landing-page forecast visualization.
+
+GitHub epic:
+- [#23 V3: Global cotton price prediction program (quant + qualitative, institutional-grade)](https://github.com/zayansalman/cotton-market-intelligence/issues/23)
+
+Execution issues:
+
+| Issue | Workstream | Outcome |
+|---|---|---|
+| [#24](https://github.com/zayansalman/cotton-market-intelligence/issues/24) | Research predictor universe | Identify all required drivers and additional factors to include |
+| [#25](https://github.com/zayansalman/cotton-market-intelligence/issues/25) | Multi-source data pipeline | Build lag-aware dataset from quant + qualitative inputs |
+| [#26](https://github.com/zayansalman/cotton-market-intelligence/issues/26) | Lagged/regime feature engineering | Capture strong lagged correlations and seasonal/regime effects |
+| [#27](https://github.com/zayansalman/cotton-market-intelligence/issues/27) | Model stack | Train baseline + advanced quant models and select champion |
+| [#28](https://github.com/zayansalman/cotton-market-intelligence/issues/28) | Backtesting | Measure true out-of-sample quality with no leakage |
+| [#29](https://github.com/zayansalman/cotton-market-intelligence/issues/29) | Accuracy scorecard | Rate current accuracy and set production thresholds |
+| [#30](https://github.com/zayansalman/cotton-market-intelligence/issues/30) | Prediction API | Serve forecast, confidence intervals, and model metadata |
+| [#31](https://github.com/zayansalman/cotton-market-intelligence/issues/31) | Landing page chart | Show forecast overlays and confidence bands on dashboard |
+| [#32](https://github.com/zayansalman/cotton-market-intelligence/issues/32) | Monitoring and retraining | Detect drift and enforce retraining/rollback policy |
+
 ## Documentation
 
 Start here:
 - `wiki/Home.md` for capability summary and planning pages
+- `wiki/Price-Prediction-Roadmap.md` for full V3 issue tracker and delivery sequence
 - `wiki/Engineering-Runbook.md` for IDE-agnostic development + CI/CD + Vercel dev/prod deployment operations

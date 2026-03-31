@@ -97,6 +97,8 @@ GitHub repository secrets:
 - `VERCEL_PROJECT_ID_PROD`
 - `HF_TOKEN` (for AI review workflow, if enabled)
 
+If deploy workflows skip with a warning about invalid `VERCEL_TOKEN`, rotate the token in GitHub secrets and re-run the workflow.
+
 Vercel project env vars (set per project/environment):
 - `OPENAI_API_KEY` (optional)
 - `OPENAI_MODEL` (optional, default behavior exists)
@@ -171,3 +173,12 @@ When process changes:
   - `README.md`
   - `wiki/Enterprise-DLC.md`
   - this runbook
+
+## 12) Active forecasting issue stack (V3)
+
+Current strategic initiative for price prediction and model quality:
+- Epic: [#23](https://github.com/zayansalman/cotton-market-intelligence/issues/23)
+- Delivery issues: [#24](https://github.com/zayansalman/cotton-market-intelligence/issues/24), [#25](https://github.com/zayansalman/cotton-market-intelligence/issues/25), [#26](https://github.com/zayansalman/cotton-market-intelligence/issues/26), [#27](https://github.com/zayansalman/cotton-market-intelligence/issues/27), [#28](https://github.com/zayansalman/cotton-market-intelligence/issues/28), [#29](https://github.com/zayansalman/cotton-market-intelligence/issues/29), [#30](https://github.com/zayansalman/cotton-market-intelligence/issues/30), [#31](https://github.com/zayansalman/cotton-market-intelligence/issues/31), [#32](https://github.com/zayansalman/cotton-market-intelligence/issues/32)
+
+Execution order and acceptance context are documented in:
+- `wiki/Price-Prediction-Roadmap.md`

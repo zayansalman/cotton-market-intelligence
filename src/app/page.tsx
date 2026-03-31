@@ -22,8 +22,7 @@ export default function Home() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [company, setCompany] = useState("ACME Spinning Ltd");
-  const [tonnage, setTonnage] = useState(5000);
+  const [tonnage, setTonnage] = useState(2000);
   const [months, setMonths] = useState(6);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [timeframe, setTimeframe] = useState<
@@ -99,7 +98,6 @@ export default function Home() {
         body: JSON.stringify({
           benchmarks: priceData.benchmarks,
           headlines,
-          company,
           tonnage,
           months,
           landedCost,
@@ -122,7 +120,7 @@ export default function Home() {
     } finally {
       setGenerating(false);
     }
-  }, [priceData, headlines, company, tonnage, months, landedCost]);
+  }, [priceData, headlines, tonnage, months, landedCost]);
 
   const displayedPrices = useMemo(() => {
     if (!priceData?.prices?.length) return [];
@@ -185,18 +183,6 @@ export default function Home() {
             <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
               Procurement Brief
             </h2>
-
-            <div>
-              <label className="text-xs text-zinc-500 block mb-1">
-                Company
-              </label>
-              <input
-                type="text"
-                value={company}
-                onChange={(e) => setCompany(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-blue-500"
-              />
-            </div>
 
             <div>
               <label className="text-xs text-zinc-500 block mb-1">

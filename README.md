@@ -73,6 +73,38 @@ Provider routing behavior:
 - `STRATEGY_MODEL_PROVIDER=openai`: force OpenAI path (falls back to heuristic if unavailable)
 - `STRATEGY_MODEL_PROVIDER=heuristic`: deterministic only
 
+### API rate limiting env vars
+
+Rate limiting is enabled on:
+- `/api/strategy`
+- `/api/headlines`
+- `/api/prices`
+- `/api/landed-cost`
+
+Per-endpoint env var pattern:
+
+```bash
+RATE_LIMIT_<ENDPOINT>_WINDOW_MS
+RATE_LIMIT_<ENDPOINT>_MAX_REQUESTS
+RATE_LIMIT_<ENDPOINT>_BURST_WINDOW_MS
+RATE_LIMIT_<ENDPOINT>_BURST_MAX
+RATE_LIMIT_<ENDPOINT>_COOLDOWN_MS
+```
+
+Endpoint keys:
+- `strategy`
+- `headlines`
+- `prices`
+- `landed_cost`
+
+Recommended production defaults:
+- `strategy`: 20 req / 60s, burst 5 / 10s, cooldown 60s
+- `headlines`: 90 req / 60s, burst 20 / 10s, cooldown 20s
+- `prices`: 90 req / 60s, burst 20 / 10s, cooldown 20s
+- `landed_cost`: 90 req / 60s, burst 20 / 10s, cooldown 20s
+
+Higher local defaults apply automatically when `NODE_ENV != production`.
+
 ## Deploy
 
 ### Vercel (recommended)
@@ -137,4 +169,6 @@ feature/10-hf-model-strategy
 
 ## Documentation
 
-See `wiki/Home.md` for current capability summary and planning pages.
+Start here:
+- `wiki/Home.md` for capability summary and planning pages
+- `wiki/Engineering-Runbook.md` for IDE-agnostic development + CI/CD + Vercel dev/prod deployment operations

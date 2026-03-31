@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import type { LandedCostResponse } from "@/lib/types";
+import {
+  applyRateLimitHeaders,
+  evaluateRequestRateLimit,
+  rateLimitExceededResponse,
+} from "@/lib/rate-limit";
 
 const LB_PER_TONNE = 2204.62262185;
 
@@ -53,6 +58,11 @@ function buildScenario({
 }
 
 export async function GET(req: Request) {
+  const rateLimit = evaluateRequestRateLimit(req, "landed_cost");
+  if (!rateLimit.allowed) {
+    return rateLimitExceededResponse(rateLimit);
+  }
+
   try {
     const { searchParams } = new URL(req.url);
 
@@ -119,9 +129,12 @@ export async function GET(req: Request) {
       },
     };
 
-    return NextResponse.json(payload);
+    return applyRateLimitHeaders(NextResponse.json(payload), rateLimit.headers);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return applyRateLimitHeaders(
+      NextResponse.json({ error: msg }, { status: 500 }),
+      rateLimit.headers
+    );
   }
 }

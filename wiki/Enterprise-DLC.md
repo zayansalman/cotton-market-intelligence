@@ -2,6 +2,8 @@
 
 This page reflects the **current production workflow** (Next.js + Vercel), not the old Docker/Streamlit setup.
 
+For day-to-day execution steps (onboarding, release checklist, rollback), see `wiki/Engineering-Runbook.md`.
+
 ## Branch model (policy)
 
 | Branch | Purpose |

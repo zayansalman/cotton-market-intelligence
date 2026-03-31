@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import type { Headline } from "@/lib/types";
+import {
+  applyRateLimitHeaders,
+  evaluateRequestRateLimit,
+  rateLimitExceededResponse,
+} from "@/lib/rate-limit";
 
 const RSS_FEEDS = [
   "https://www.cottongrower.com/feed/",
@@ -31,7 +36,12 @@ function parseRSS(xml: string): Headline[] {
   return items;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimit = evaluateRequestRateLimit(req, "headlines");
+  if (!rateLimit.allowed) {
+    return rateLimitExceededResponse(rateLimit);
+  }
+
   const allHeadlines: Headline[] = [];
 
   const results = await Promise.allSettled(
@@ -52,5 +62,8 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json(allHeadlines.slice(0, 40));
+  return applyRateLimitHeaders(
+    NextResponse.json(allHeadlines.slice(0, 40)),
+    rateLimit.headers
+  );
 }

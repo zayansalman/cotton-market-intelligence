@@ -35,6 +35,7 @@ This wiki describes the **current live MVP** running on Vercel and the next step
 - `wiki/Strategic-Procurement.md` — strategy logic and decision framing
 - `wiki/Enterprise-DLC.md` — agile workflow, CI/CD, branch model
 - `wiki/Engineering-Runbook.md` — IDE-agnostic continuation runbook (setup, CI/CD, Vercel dev/prod, release, rollback)
+- `wiki/Price-Prediction-Roadmap.md` — full V3 issue tracker for forecasting, backtesting, and landing-page prediction delivery
 
 ## Context pages
 
@@ -45,4 +46,10 @@ This wiki describes the **current live MVP** running on Vercel and the next step
 ## Notes
 
 Older docs describing Python CLI / Docker / Streamlit are superseded by the current Vercel stack.
+
+## Active V3 initiative
+
+Forecasting and prediction capability is now tracked as an issue-driven program:
+- Epic: [#23](https://github.com/zayansalman/cotton-market-intelligence/issues/23)
+- Execution issues: [#24](https://github.com/zayansalman/cotton-market-intelligence/issues/24) to [#32](https://github.com/zayansalman/cotton-market-intelligence/issues/32)
 

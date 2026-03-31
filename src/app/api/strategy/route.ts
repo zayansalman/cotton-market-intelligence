@@ -47,7 +47,6 @@ The monthly_plan pct values MUST sum to 100.`;
 interface StrategyRequest {
   benchmarks: Benchmarks;
   headlines: Headline[];
-  company: string;
   tonnage: number;
   months: number;
   landedCost?: LandedCostResponse | null;
@@ -181,7 +180,6 @@ function heuristicStrategy(
 function buildUserMessage(
   benchmarks: Benchmarks,
   headlines: Headline[],
-  company: string,
   tonnage: number,
   months: number,
   landedCost?: LandedCostResponse | null
@@ -203,7 +201,6 @@ RECENT NEWS HEADLINES:
 ${JSON.stringify(headlineSummary, null, 2)}
 
 CLIENT REQUIREMENT:
-- Company: ${company}
 - Total tonnage: ${tonnage.toLocaleString()} tonnes
 - Horizon: ${months} months
 - Implied monthly rate: ${Math.round(tonnage / months).toLocaleString()} tonnes/month
@@ -346,11 +343,10 @@ export async function POST(req: Request) {
 
   try {
     const body: StrategyRequest = await req.json();
-    const { benchmarks, headlines, company, tonnage, months, landedCost } = body;
+    const { benchmarks, headlines, tonnage, months, landedCost } = body;
     const userMsg = buildUserMessage(
       benchmarks,
       headlines,
-      company,
       tonnage,
       months,
       landedCost

@@ -34,6 +34,7 @@ This wiki describes the **current live MVP** running on Vercel and the next step
 - `wiki/How-It-Works.md` — current technical flow
 - `wiki/Strategic-Procurement.md` — strategy logic and decision framing
 - `wiki/Enterprise-DLC.md` — agile workflow, CI/CD, branch model
+- `wiki/Engineering-Runbook.md` — IDE-agnostic continuation runbook (setup, CI/CD, Vercel dev/prod, release, rollback)
 
 ## Context pages
 

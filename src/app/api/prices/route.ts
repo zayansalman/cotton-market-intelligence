@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import type { PricePoint, Benchmarks, PricesResponse } from "@/lib/types";
+import {
+  applyRateLimitHeaders,
+  evaluateRequestRateLimit,
+  rateLimitExceededResponse,
+} from "@/lib/rate-limit";
 
 interface YFQuote {
   timestamp: number[];
@@ -8,7 +13,12 @@ interface YFQuote {
   };
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimit = evaluateRequestRateLimit(req, "prices");
+  if (!rateLimit.allowed) {
+    return rateLimitExceededResponse(rateLimit);
+  }
+
   try {
     const now = Math.floor(Date.now() / 1000);
     const fiveYearsAgo = now - 5 * 365 * 24 * 3600;
@@ -20,16 +30,22 @@ export async function GET() {
     });
 
     if (!res.ok) {
-      return NextResponse.json(
-        { error: "Yahoo Finance API unavailable" },
-        { status: 502 }
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          { error: "Yahoo Finance API unavailable" },
+          { status: 502 }
+        ),
+        rateLimit.headers
       );
     }
 
     const data = await res.json();
     const result = data?.chart?.result?.[0] as YFQuote | undefined;
     if (!result) {
-      return NextResponse.json({ error: "No data returned" }, { status: 502 });
+      return applyRateLimitHeaders(
+        NextResponse.json({ error: "No data returned" }, { status: 502 }),
+        rateLimit.headers
+      );
     }
 
     const timestamps = result.timestamp;
@@ -48,7 +64,10 @@ export async function GET() {
 
     const n = rawPrices.length;
     if (n < 10) {
-      return NextResponse.json({ error: "Insufficient data" }, { status: 502 });
+      return applyRateLimitHeaders(
+        NextResponse.json({ error: "Insufficient data" }, { status: 502 }),
+        rateLimit.headers
+      );
     }
 
     const ma = (arr: number[], window: number, idx: number): number | null => {
@@ -123,9 +142,12 @@ export async function GET() {
       benchmarks,
     };
 
-    return NextResponse.json(response);
+    return applyRateLimitHeaders(NextResponse.json(response), rateLimit.headers);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return applyRateLimitHeaders(
+      NextResponse.json({ error: msg }, { status: 500 }),
+      rateLimit.headers
+    );
   }
 }

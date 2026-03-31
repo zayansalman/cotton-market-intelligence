@@ -6,6 +6,11 @@ import type {
   MonthlyPlan,
   LandedCostResponse,
 } from "@/lib/types";
+import {
+  applyRateLimitHeaders,
+  evaluateRequestRateLimit,
+  rateLimitExceededResponse,
+} from "@/lib/rate-limit";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -334,6 +339,11 @@ async function runHuggingFaceStrategy(
 }
 
 export async function POST(req: Request) {
+  const rateLimit = evaluateRequestRateLimit(req, "strategy");
+  if (!rateLimit.allowed) {
+    return rateLimitExceededResponse(rateLimit);
+  }
+
   try {
     const body: StrategyRequest = await req.json();
     const { benchmarks, headlines, company, tonnage, months, landedCost } = body;
@@ -349,19 +359,27 @@ export async function POST(req: Request) {
 
     if (provider === "huggingface" && process.env.HF_TOKEN) {
       const strategy = await runHuggingFaceStrategy(userMsg, process.env.HF_TOKEN);
-      if (strategy) return NextResponse.json(strategy);
+      if (strategy) {
+        return applyRateLimitHeaders(NextResponse.json(strategy), rateLimit.headers);
+      }
     }
 
     if (provider === "openai" && process.env.OPENAI_API_KEY) {
       const strategy = await runOpenAiStrategy(userMsg, process.env.OPENAI_API_KEY);
-      if (strategy) return NextResponse.json(strategy);
+      if (strategy) {
+        return applyRateLimitHeaders(NextResponse.json(strategy), rateLimit.headers);
+      }
     }
 
-    return NextResponse.json(
-      heuristicStrategy(benchmarks, tonnage, months, landedCost)
+    return applyRateLimitHeaders(
+      NextResponse.json(heuristicStrategy(benchmarks, tonnage, months, landedCost)),
+      rateLimit.headers
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return applyRateLimitHeaders(
+      NextResponse.json({ error: msg }, { status: 500 }),
+      rateLimit.headers
+    );
   }
 }

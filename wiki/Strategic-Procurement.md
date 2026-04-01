@@ -1,35 +1,52 @@
-# Strategic Procurement (Current MVP)
+# Strategic Procurement
 
 Core question:
 
-> We need **X tonnes** in **Y months**. What is the best month-by-month buying plan right now?
+> We need **X tonnes** in **Y months** with **these constraints**. What is the best month-by-month buying plan right now?
 
-## Live strategy behavior
+## Strategy behavior
 
 The live app combines:
-1. **Price regime signals**
+1. **Price regime signals** (percentile, z-score, momentum)
 2. **Volatility-aware pacing**
 3. **Current headline context**
-4. **AI reasoning (optional) with deterministic fallback**
+4. **AI reasoning (HF-first, OpenAI fallback) with deterministic fallback**
+5. **Purchaser constraints** (V2: quality, timeline, commercial, finance, logistics)
 
-## Input
+## Input modes
 
-- `company`
-- `tonnage`
-- `months`
-- Real-time price benchmarks
-- Current RSS headlines
+### Basic mode (V1 compatible)
+- `tonnage` (tonnes needed)
+- `months` (planning horizon)
+- Real-time price benchmarks + RSS headlines + landed cost context
+
+### Advanced mode (V2)
+Full `PurchaserInput` schema with 6 field groups:
+- **Demand**: tonnage, horizon, consumption rate, inventory, safety stock
+- **Timeline**: arrival windows, delivery cadence, urgency, receipt capacity
+- **Quality**: origins, HVI specs (staple, micronaire, strength, color, trash), ginning, contamination
+- **Commercial**: pricing mode, basis target, tolerance, lot rules
+- **Logistics**: incoterm, ports, inland delivery, shipment window
+- **Finance**: payment terms, credit days, FX, supplier limits, traceability
+
+See [Purchaser-Inputs-Bangladesh](Purchaser-Inputs-Bangladesh.md) for full field reference.
 
 ## Output
 
-- Signal (`STRONG_BUY`, `BUY`, `HOLD`, `AVOID`)
-- Confidence score
-- Executive summary
-- Market analysis
-- Monthly purchase tranches (`month`, `%`, `tonnes`, rationale)
-- Risk factors
-- Next actions
-- Key levels (`support`, `fair_value`, `resistance`)
+| Field | V1 | V2 |
+|-------|----|----|
+| Signal (STRONG_BUY/BUY/HOLD/AVOID) | Yes | Yes |
+| Confidence score | Yes | Yes |
+| Executive summary | Yes | Yes |
+| Market analysis | Yes | Yes |
+| Monthly purchase tranches | Yes | Yes |
+| Risk factors | Yes | Yes (+ constraint risks) |
+| Next actions | Yes | Yes |
+| Key levels (support/fair_value/resistance) | Yes | Yes |
+| **Binding constraints** | — | Yes |
+| **Assumption set** | — | Yes |
+| **Constraint risks** | — | Yes |
+| **Plan feasibility score** | — | Yes (0–100) |
 
 ## Decision framework
 
@@ -39,24 +56,46 @@ The live app combines:
 - **Expensive regime** (high percentile) → `AVOID`
 - **Middle regime** → `HOLD`
 
-### Roadmap shaping
+### Roadmap shaping (V1)
 
-- `STRONG_BUY/BUY`: front-load purchases
-- `AVOID`: back-load purchases
-- High volatility: flatten allocations to reduce timing risk
+- `STRONG_BUY/BUY`: front-load purchases (exponential decay)
+- `AVOID`: back-load purchases (exponential growth)
+- High volatility (>30%): flatten allocations to reduce timing risk
+
+### Constraint adjustments (V2)
+
+- **Urgency** (urgent/emergency): multiplies early-month weights
+- **Receipt capacity**: caps front-loading when mill can't absorb fast
+- **Strict quality** (2+ tight specs): smooths allocation to reduce execution pressure
+- **Short credit** (≤90d): dampens early concentration
+- **Single origin**: flagged as supply concentration risk
 
 ### AI enhancement
 
-When OpenAI is configured:
-- model receives structured market + headline context
-- returns structured JSON strategy for execution and audit trails
-- if AI fails, system reverts to deterministic path
+When HF token (primary) or OpenAI key (fallback) is configured:
+- Model receives structured market + headline + constraint context
+- Returns structured JSON strategy
+- If AI fails, system reverts to deterministic path
+
+## Scenario management (V2)
+
+- **Save** full input + strategy as named scenario (localStorage)
+- **Compare** two scenarios side-by-side (allocations, feasibility, risks)
+- **Replay** with refreshed market data
+- **Export/import** scenario JSON for backup/sharing
 
 ## Where this logic lives
 
-- `src/app/api/strategy/route.ts` — orchestration, AI call, fallback
-- `src/app/api/prices/route.ts` — benchmark calculations
-- `src/app/api/headlines/route.ts` — news ingestion
+| Module | Purpose |
+|--------|---------|
+| `src/app/api/strategy/route.ts` | API orchestration, request parsing, AI calls |
+| `src/lib/schemas/purchaser-input.ts` | PurchaserInput zod schema + presets |
+| `src/lib/schemas/strategy-request.ts` | V2 request parsing + legacy detection |
+| `src/lib/engine/constraints.ts` | Constraint evaluation + pacing multipliers |
+| `src/lib/engine/heuristic-v2.ts` | V2 heuristic strategy with constraint awareness |
+| `src/lib/engine/feasibility.ts` | Plan feasibility scoring |
+| `src/lib/engine/assumptions.ts` | Bangladesh origin lead-times + credit stress |
+| `src/lib/scenarios/store.ts` | localStorage scenario CRUD |
 
 ## Operating guidance
 
@@ -64,9 +103,4 @@ Treat this as **decision support**, not autopilot execution:
 - Keep procurement manager override authority
 - Log and review strategy outputs by date
 - Add approval gates for high-tonnage buys
-
-## Next upgrades
-
-- Basis-aware strategy (futures + local landed cost)
-- Supplier/lot constraints in optimization
-- Backtest mode for confidence calibration
+- Use scenario comparison to explore constraint trade-offs before committing

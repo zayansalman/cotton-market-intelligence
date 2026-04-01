@@ -11,6 +11,7 @@ import {
   evaluateRequestRateLimit,
   rateLimitExceededResponse,
 } from "@/lib/rate-limit";
+import { parseStrategyRequest } from "@/lib/schemas/strategy-request";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -342,8 +343,20 @@ export async function POST(req: Request) {
   }
 
   try {
-    const body: StrategyRequest = await req.json();
-    const { benchmarks, headlines, tonnage, months, landedCost } = body;
+    const body = await req.json();
+    const parsed = parseStrategyRequest(body);
+
+    if (!parsed.ok) {
+      return applyRateLimitHeaders(
+        NextResponse.json({ errors: parsed.errors }, { status: 422 }),
+        rateLimit.headers
+      );
+    }
+
+    const { purchaserInput, benchmarks, headlines, landedCost } = parsed.data;
+    const tonnage = purchaserInput.demand.required_tonnes;
+    const months = purchaserInput.demand.planning_horizon_months;
+
     const userMsg = buildUserMessage(
       benchmarks,
       headlines,

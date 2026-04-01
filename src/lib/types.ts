@@ -87,6 +87,36 @@ export interface LandedCostPoint {
   effective_bdt_kg: number;
 }
 
+/* ------------------------------------------------------------------ */
+/*  V2: PurchaserInput (re-exported from zod schema)                  */
+/* ------------------------------------------------------------------ */
+
+export type {
+  PurchaserInput,
+  PresetName,
+} from "./schemas/purchaser-input";
+
+export {
+  purchaserInputSchema,
+  PRESETS,
+  PRESET_BANGLADESH_SPINNER,
+  PRESET_FAST_REPLENISHMENT,
+  PRESET_QUALITY_CRITICAL,
+} from "./schemas/purchaser-input";
+
+export type {
+  LegacyStrategyInput,
+} from "./schemas/legacy-adapter";
+
+export {
+  isLegacyInput,
+  legacyToPurchaserInput,
+} from "./schemas/legacy-adapter";
+
+/* ------------------------------------------------------------------ */
+/*  Landed cost                                                       */
+/* ------------------------------------------------------------------ */
+
 export interface LandedCostResponse {
   assumptions: LandedCostAssumptions;
   breakdown: LandedCostBreakdown;

@@ -49,7 +49,7 @@ Additionally, PRs run `.github/workflows/ai-review.yml`:
 
 ## CD pipeline
 
-CD is split into two explicit lanes:
+CD is split into two explicit lanes. **No other branches deploy.**
 
 ### Dev lane
 - Branch: `develop`
@@ -63,7 +63,11 @@ CD is split into two explicit lanes:
 - Project: `cmi-notebooks`
 - URL: [https://cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app)
 
-This separates integration velocity from production stability.
+### Feature branch previews: DISABLED
+
+`vercel.json` disables Vercel Git integration for `feature/*`, `fix/*`, and `hotfix/*` branches. Pushing these branches will NOT create Vercel preview deployments. To deploy for testing, merge into `develop`.
+
+This separates integration velocity from production stability and avoids wasting Vercel deployment quota on throwaway previews.
 
 ## Environment and secrets
 

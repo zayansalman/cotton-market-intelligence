@@ -71,7 +71,7 @@ Success criteria:
 - Trigger: push to `develop` (or manual dispatch)
 - GitHub environment: `development`
 - Vercel project secret used: `VERCEL_PROJECT_ID_DEV`
-- Intended URL: `https://cmi-notebooks-dev.vercel.app`
+- URL: `https://cmi-notebooks-dev.vercel.app`
 
 ### Prod lane
 - Workflow: `.github/workflows/deploy-prod.yml`
@@ -79,6 +79,16 @@ Success criteria:
 - GitHub environment: `production`
 - Vercel project secret used: `VERCEL_PROJECT_ID_PROD`
 - URL: `https://cmi-notebooks.vercel.app`
+
+### Preview deployments (DISABLED for feature branches)
+
+`vercel.json` explicitly disables Vercel's Git integration preview builds for `feature/*`, `fix/*`, and `hotfix/*` branches. Only `main` and `develop` trigger Vercel deployments.
+
+**DO NOT push feature branches expecting a Vercel preview.** The correct flow is:
+1. Work on `feature/*` branch
+2. Merge into `develop`
+3. `develop` push triggers dev deployment automatically
+4. Validate on `cmi-notebooks-dev.vercel.app`
 
 Both deploy workflows:
 1. validate required Vercel secrets

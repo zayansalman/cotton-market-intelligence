@@ -14,6 +14,7 @@ import {
 import { parseStrategyRequest } from "@/lib/schemas/strategy-request";
 import { safeParseBody, safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
 import { checkAiQuota, recordAiUsage } from "@/lib/usage-quota";
+import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -341,6 +342,9 @@ async function runHuggingFaceStrategy(
 }
 
 export async function POST(req: Request) {
+  const abuse = checkAbuse(req);
+  if (abuse.blocked) return abuseBlockedResponse(abuse);
+
   const rateLimit = evaluateRequestRateLimit(req, "strategy");
   if (!rateLimit.allowed) {
     return rateLimitExceededResponse(rateLimit);

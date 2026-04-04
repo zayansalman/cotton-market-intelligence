@@ -6,6 +6,7 @@ import {
   rateLimitExceededResponse,
 } from "@/lib/rate-limit";
 import { safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
+import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 
 interface YFQuote {
   timestamp: number[];
@@ -15,6 +16,9 @@ interface YFQuote {
 }
 
 export async function GET(req: Request) {
+  const abuse = checkAbuse(req);
+  if (abuse.blocked) return abuseBlockedResponse(abuse);
+
   const rateLimit = evaluateRequestRateLimit(req, "prices");
   if (!rateLimit.allowed) {
     return rateLimitExceededResponse(rateLimit);

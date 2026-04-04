@@ -5,6 +5,7 @@ import {
   evaluateRequestRateLimit,
   rateLimitExceededResponse,
 } from "@/lib/rate-limit";
+import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 
 const RSS_FEEDS = [
   "https://www.cottongrower.com/feed/",
@@ -37,6 +38,9 @@ function parseRSS(xml: string): Headline[] {
 }
 
 export async function GET(req: Request) {
+  const abuse = checkAbuse(req);
+  if (abuse.blocked) return abuseBlockedResponse(abuse);
+
   const rateLimit = evaluateRequestRateLimit(req, "headlines");
   if (!rateLimit.allowed) {
     return rateLimitExceededResponse(rateLimit);

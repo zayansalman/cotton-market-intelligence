@@ -70,7 +70,6 @@ export default function Home() {
   const [timeframe, setTimeframe] = useState<
     "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL"
   >("1Y");
-
   const displayedPrices = useMemo(() => {
     if (!priceData?.prices?.length) return [];
     const points = priceData.prices;

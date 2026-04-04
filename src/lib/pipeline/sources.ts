@@ -282,5 +282,48 @@ export function buildFactorFetchers(): FactorFetcher[] {
       },
       fetch: () => fetchFred("MPMICNMA669S", fredKey),
     },
+
+    // === COMPETING: Soybean futures (planting competition) ===
+    {
+      meta: {
+        id: "soybean",
+        name: "Soybean Futures",
+        group: "competing" as const,
+        frequency: "daily" as const,
+        release_lag_days: 0,
+        unit: "$/bushel",
+        source: "Yahoo Finance (ZS=F)",
+        direction: -1 as const,
+      },
+      fetch: () => fetchYahoo("ZS=F", 5),
+    },
+    // Wheat futures (planting competition)
+    {
+      meta: {
+        id: "wheat",
+        name: "Wheat Futures",
+        group: "competing" as const,
+        frequency: "daily" as const,
+        release_lag_days: 0,
+        unit: "$/bushel",
+        source: "Yahoo Finance (ZW=F)",
+        direction: -1 as const,
+      },
+      fetch: () => fetchYahoo("ZW=F", 5),
+    },
+    // Corn futures (planting competition)
+    {
+      meta: {
+        id: "corn",
+        name: "Corn Futures",
+        group: "competing" as const,
+        frequency: "daily" as const,
+        release_lag_days: 0,
+        unit: "$/bushel",
+        source: "Yahoo Finance (ZC=F)",
+        direction: -1 as const,
+      },
+      fetch: () => fetchYahoo("ZC=F", 5),
+    },
   ];
 }

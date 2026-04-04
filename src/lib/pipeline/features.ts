@@ -179,6 +179,19 @@ export const FEATURE_SPECS: FeatureSpec[] = [
   { name: "oil_ret_21d", group: "cross_market", description: "Crude oil 21-day return" },
   { name: "sp500_ret_21d", group: "cross_market", description: "S&P 500 21-day return" },
 
+  // Lagged cross-market
+  { name: "dxy_lag_5d", group: "cross_market", description: "DXY 5 days ago" },
+  { name: "dxy_lag_21d", group: "cross_market", description: "DXY 21 days ago" },
+  { name: "oil_lag_5d", group: "cross_market", description: "Crude oil 5 days ago" },
+  { name: "oil_lag_21d", group: "cross_market", description: "Crude oil 21 days ago" },
+  { name: "vix_lag_5d", group: "cross_market", description: "VIX 5 days ago" },
+  // Cross-commodity ratios
+  { name: "cotton_soybean_ratio", group: "cross_market", description: "Cotton / Soybean ratio" },
+  { name: "cotton_wheat_ratio", group: "cross_market", description: "Cotton / Wheat ratio" },
+  { name: "soybean_ret_21d", group: "cross_market", description: "Soybean 21-day return" },
+  // Sentiment
+  { name: "sentiment_score", group: "cross_market", description: "News sentiment aggregate score (-1 to +1)" },
+
   // Calendar/seasonal
   { name: "month", group: "calendar", description: "Month of year (1-12)" },
   { name: "quarter", group: "calendar", description: "Quarter (1-4)" },
@@ -207,6 +220,8 @@ export function buildFeatures(
   const oil = dates.map((d) => aligned[d]?.crude_oil ?? null);
   const vix = dates.map((d) => aligned[d]?.vix ?? null);
   const sp500 = dates.map((d) => aligned[d]?.sp500 ?? null);
+  const soybean = dates.map((d) => aligned[d]?.soybean ?? null);
+  const wheat = dates.map((d) => aligned[d]?.wheat ?? null);
 
   // Precompute arrays
   const cottonRet5 = pctChange(cotton, 5);
@@ -234,6 +249,13 @@ export function buildFeatures(
   const dxyRet21 = pctChange(dxy, 21);
   const oilRet21 = pctChange(oil, 21);
   const sp500Ret21 = pctChange(sp500, 21);
+
+  const dxyLag5 = lag(dxy, 5);
+  const dxyLag21 = lag(dxy, 21);
+  const oilLag5 = lag(oil, 5);
+  const oilLag21 = lag(oil, 21);
+  const vixLag5 = lag(vix, 5);
+  const soybeanRet21 = pctChange(soybean, 21);
 
   // Forward returns (targets for supervised learning)
   const fwdRet5 = dates.map((_, i) => {
@@ -330,6 +352,19 @@ export function buildFeatures(
       vix_level: vix[i],
       oil_ret_21d: oilRet21[i],
       sp500_ret_21d: sp500Ret21[i],
+
+      // Lagged cross-market
+      dxy_lag_5d: dxyLag5[i],
+      dxy_lag_21d: dxyLag21[i],
+      oil_lag_5d: oilLag5[i],
+      oil_lag_21d: oilLag21[i],
+      vix_lag_5d: vixLag5[i],
+      cotton_soybean_ratio: cotton[i] != null && soybean[i] != null && soybean[i]! > 0
+        ? Math.round((cotton[i]! / soybean[i]!) * 100000) / 100000 : null,
+      cotton_wheat_ratio: cotton[i] != null && wheat[i] != null && wheat[i]! > 0
+        ? Math.round((cotton[i]! / wheat[i]!) * 100000) / 100000 : null,
+      soybean_ret_21d: soybeanRet21[i],
+      sentiment_score: 0, // filled at prediction time
 
       // Calendar
       month: monthNum,

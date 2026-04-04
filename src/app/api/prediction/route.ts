@@ -48,6 +48,8 @@ interface PredictionResponse {
   sentiment: MarketSentiment | null;
   /** HF-powered AI forecasts (LLM + Chronos). */
   hf_forecasts: HFForecast[];
+  /** Walk-forward backtest results (when include_backtest=true). */
+  backtest_results: unknown;
 }
 
 interface ForecastEntry {
@@ -231,6 +233,23 @@ export async function GET(req: Request) {
       console.warn("[prediction] HF enhancement failed (non-fatal):", e);
     }
 
+    // --- Backtest results (optional) ---
+    const includeBacktest = searchParams.get("include_backtest") === "true";
+    let backtestResults = undefined;
+    if (includeBacktest) {
+      try {
+        const { compareModelsWalkForward } = await import("@/lib/models/walk-forward");
+        const { MODEL_REGISTRY } = await import("@/lib/models/trainer");
+        backtestResults = compareModelsWalkForward(MODEL_REGISTRY, featureRows, {
+          min_train_size: 200,
+          step_size: 21,
+          horizon,
+        });
+      } catch (e) {
+        console.warn("[prediction] Backtest computation failed (non-fatal):", e);
+      }
+    }
+
     const response: PredictionResponse = {
       version: 2,
       generated_at: new Date().toISOString(),
@@ -247,6 +266,7 @@ export async function GET(req: Request) {
       top_drivers: topDrivers,
       sentiment,
       hf_forecasts: hfForecasts,
+      backtest_results: backtestResults ?? null,
     };
 
     return applyRateLimitHeaders(NextResponse.json(response), rateLimit.headers);

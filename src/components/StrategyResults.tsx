@@ -159,6 +159,33 @@ export default function StrategyResults({
         </div>
       </div>
 
+      {/* Decision drivers */}
+      {(strategy as unknown as Record<string, unknown>).decision_drivers && (
+        <div className="mt-6">
+          <h4 className="text-sm font-semibold text-zinc-300 mb-3">Decision Drivers</h4>
+          <div className="space-y-2">
+            {((strategy as unknown as Record<string, unknown>).decision_drivers as Array<{
+              source: string; weight: number; direction: string; magnitude: number; reasoning: string;
+            }>).map((driver, i) => (
+              <div key={i} className="bg-zinc-700/30 border border-zinc-700 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-zinc-200">{driver.source}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500">{(driver.weight * 100).toFixed(0)}% weight</span>
+                    <span className={`text-xs font-semibold ${
+                      driver.direction === "up" ? "text-green-400" : driver.direction === "down" ? "text-red-400" : "text-zinc-400"
+                    }`}>
+                      {driver.direction === "up" ? "\u2191" : driver.direction === "down" ? "\u2193" : "\u2192"} {driver.direction.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-xs text-zinc-400 mt-1">{driver.reasoning}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Risks & Actions */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {strategy.risk_factors.length > 0 && (

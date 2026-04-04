@@ -14,6 +14,7 @@ import InputBriefSummary from "@/components/procurement/InputBriefSummary";
 import ScenarioManager from "@/components/scenarios/ScenarioManager";
 import ScenarioCompare from "@/components/scenarios/ScenarioCompare";
 import BacktestPanel from "@/components/BacktestPanel";
+import PredictionBacktest from "@/components/PredictionBacktest";
 import AlertManager from "@/components/AlertManager";
 import ForecastOverlay from "@/components/ForecastOverlay";
 import { useForecast } from "@/hooks/useForecast";
@@ -325,6 +326,9 @@ export default function Home() {
 
           {/* Backtest panel */}
           <BacktestPanel />
+
+          {/* Prediction model backtest */}
+          <PredictionBacktest />
         </main>
       </div>
     </div>

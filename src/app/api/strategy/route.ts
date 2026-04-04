@@ -15,6 +15,9 @@ import { parseStrategyRequest } from "@/lib/schemas/strategy-request";
 import { safeParseBody, safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
 import { checkAiQuota, recordAiUsage } from "@/lib/usage-quota";
 import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
+import { computeUnifiedSignal } from "@/lib/engine/unified-signal";
+import type { UnifiedSignal } from "@/lib/engine/unified-signal";
+import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -376,6 +379,34 @@ export async function POST(req: Request) {
       landedCost
     );
     const provider = resolveProvider();
+
+    // --- Compute unified signal (non-blocking) ---
+    let unifiedSignal: UnifiedSignal | null = null;
+    try {
+      // Get heuristic baseline return
+      const heuristicBaseResult = heuristicStrategy(benchmarks, tonnage, months);
+      const heuristicReturn = heuristicBaseResult.signal === "STRONG_BUY" ? 0.03
+        : heuristicBaseResult.signal === "BUY" ? 0.015
+        : heuristicBaseResult.signal === "AVOID" ? -0.02
+        : 0;
+
+      // Try sentiment analysis on headlines
+      const sentimentResult = await analyzeHeadlineSentiment(
+        headlines.map(h => ({ title: h.title, summary: h.summary ?? "" }))
+      ).catch(() => null);
+
+      unifiedSignal = computeUnifiedSignal({
+        model_return: null, // TODO: integrate prediction model when available in same request
+        model_confidence: null,
+        llm_return: null, // Filled by AI strategy if it runs
+        llm_confidence: null,
+        llm_reasoning: null,
+        heuristic_return: heuristicReturn,
+        heuristic_signal: heuristicBaseResult.signal,
+        sentiment_score: sentimentResult?.aggregate_score ?? null,
+      });
+    } catch { /* non-fatal */ }
+
     const quota = checkAiQuota(req);
     const allHeaders = { ...rateLimit.headers, ...quota.headers };
 
@@ -406,8 +437,15 @@ export async function POST(req: Request) {
       }
     }
 
+    const heuristicResult = heuristicStrategy(benchmarks, tonnage, months, landedCost);
+    if (unifiedSignal) {
+      heuristicResult.signal = unifiedSignal.signal;
+      heuristicResult.confidence = Math.round(unifiedSignal.confidence * 100);
+      (heuristicResult as unknown as Record<string, unknown>).decision_drivers = unifiedSignal.decision_drivers;
+      (heuristicResult as unknown as Record<string, unknown>).predicted_return = unifiedSignal.predicted_return;
+    }
     return applyRateLimitHeaders(
-      NextResponse.json(heuristicStrategy(benchmarks, tonnage, months, landedCost)),
+      NextResponse.json(heuristicResult),
       allHeaders
     );
   } catch (e) {

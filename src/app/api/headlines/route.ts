@@ -12,6 +12,9 @@ const RSS_FEEDS = [
   "https://www.textileworld.com/feed/",
   "https://www.usda.gov/rss/latest-news.xml",
   "https://blogs.worldbank.org/en/topic/agriculture/rss.xml",
+  "https://www.reuters.com/markets/commodities/rss",
+  "https://www.icac.org/rss",
+  "https://www.fibre2fashion.com/rss/cotton-news.xml",
 ];
 
 function extractText(xml: string, tag: string): string {

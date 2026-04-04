@@ -103,6 +103,25 @@ export async function GET(req: Request) {
       );
     }
 
+    // --- Inject live sentiment into latest feature rows ---
+    // Compute sentiment BEFORE training so the model sees it as a real feature
+    let liveSentimentScore = 0;
+    try {
+      const headlinesForSentiment = await fetch(new URL("/api/headlines", req.url).toString());
+      if (headlinesForSentiment.ok) {
+        const hlData = await headlinesForSentiment.json();
+        const sentResult = await analyzeHeadlineSentiment(hlData).catch(() => null);
+        if (sentResult) {
+          liveSentimentScore = sentResult.aggregate_score;
+          // Inject sentiment into the last 21 rows (recent context window)
+          const injectWindow = Math.min(21, featureRows.length);
+          for (let i = featureRows.length - injectWindow; i < featureRows.length; i++) {
+            featureRows[i].features.sentiment_score = liveSentimentScore;
+          }
+        }
+      }
+    } catch { /* non-fatal — sentiment stays at 0 */ }
+
     // Train and get champion
     const trainResult = trainAndEvaluate(featureRows, horizon, 0.85);
     const champion = trainResult.champion;

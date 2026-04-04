@@ -189,6 +189,8 @@ export const FEATURE_SPECS: FeatureSpec[] = [
   { name: "cotton_soybean_ratio", group: "cross_market", description: "Cotton / Soybean ratio" },
   { name: "cotton_wheat_ratio", group: "cross_market", description: "Cotton / Wheat ratio" },
   { name: "soybean_ret_21d", group: "cross_market", description: "Soybean 21-day return" },
+  { name: "cotton_corn_ratio", group: "cross_market", description: "Cotton / Corn ratio (acreage competition)" },
+  { name: "corn_ret_21d", group: "cross_market", description: "Corn 21-day return" },
   // Sentiment
   { name: "sentiment_score", group: "cross_market", description: "News sentiment aggregate score (-1 to +1)" },
 
@@ -222,6 +224,7 @@ export function buildFeatures(
   const sp500 = dates.map((d) => aligned[d]?.sp500 ?? null);
   const soybean = dates.map((d) => aligned[d]?.soybean ?? null);
   const wheat = dates.map((d) => aligned[d]?.wheat ?? null);
+  const corn = dates.map((d) => aligned[d]?.corn ?? null);
 
   // Precompute arrays
   const cottonRet5 = pctChange(cotton, 5);
@@ -256,6 +259,7 @@ export function buildFeatures(
   const oilLag21 = lag(oil, 21);
   const vixLag5 = lag(vix, 5);
   const soybeanRet21 = pctChange(soybean, 21);
+  const cornRet21 = pctChange(corn, 21);
 
   // Forward returns (targets for supervised learning)
   const fwdRet5 = dates.map((_, i) => {
@@ -364,7 +368,10 @@ export function buildFeatures(
       cotton_wheat_ratio: cotton[i] != null && wheat[i] != null && wheat[i]! > 0
         ? Math.round((cotton[i]! / wheat[i]!) * 100000) / 100000 : null,
       soybean_ret_21d: soybeanRet21[i],
-      sentiment_score: 0, // filled at prediction time
+      cotton_corn_ratio: cotton[i] != null && corn[i] != null && corn[i]! > 0
+        ? Math.round((cotton[i]! / corn[i]!) * 100000) / 100000 : null,
+      corn_ret_21d: cornRet21[i],
+      sentiment_score: 0, // default; overridden at prediction time when HF sentiment available
 
       // Calendar
       month: monthNum,

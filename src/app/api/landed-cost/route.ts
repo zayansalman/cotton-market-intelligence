@@ -5,6 +5,7 @@ import {
   evaluateRequestRateLimit,
   rateLimitExceededResponse,
 } from "@/lib/rate-limit";
+import { safeErrorResponse } from "@/lib/api-security";
 
 const LB_PER_TONNE = 2204.62262185;
 
@@ -131,9 +132,8 @@ export async function GET(req: Request) {
 
     return applyRateLimitHeaders(NextResponse.json(payload), rateLimit.headers);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Unknown error";
     return applyRateLimitHeaders(
-      NextResponse.json({ error: msg }, { status: 500 }),
+      safeErrorResponse(e, "landed_cost"),
       rateLimit.headers
     );
   }

@@ -68,6 +68,7 @@ const demandSchema = z.object({
     .describe("Minimum days of safety stock to maintain"),
   yarn_count_or_end_use_mix: z
     .string()
+    .max(500)
     .optional()
     .describe("Target yarn count / end-use mix (e.g. 'Ne 30-40 combed')"),
 });
@@ -120,7 +121,8 @@ const ginningPreference = z.enum(["roller", "saw", "any"]);
 
 const qualitySchema = z.object({
   preferred_origins: z
-    .array(z.string())
+    .array(z.string().max(100))
+    .max(20)
     .optional()
     .describe("Origins in priority order (e.g. ['US', 'Brazil', 'India'])"),
   staple_length_range: numericRange
@@ -142,6 +144,7 @@ const qualitySchema = z.object({
     .describe("Minimum length uniformity index (%)"),
   color_grade_range: z
     .string()
+    .max(50)
     .optional()
     .describe("Acceptable color grade range (e.g. '11-31')"),
   leaf_trash_max: z
@@ -159,6 +162,7 @@ const qualitySchema = z.object({
     .describe("Maximum moisture content (%)"),
   contamination_tolerance: z
     .string()
+    .max(500)
     .optional()
     .describe("Contamination/foreign-matter policy (e.g. 'zero plastic')"),
   ginning_preference: ginningPreference
@@ -234,17 +238,19 @@ const logisticsSchema = z.object({
     .optional()
     .describe("Trade term (e.g. CFR, CIF, FOB)"),
   load_port_preferences: z
-    .array(z.string())
+    .array(z.string().max(100))
+    .max(20)
     .optional()
     .describe("Preferred load ports (e.g. ['Houston', 'Santos'])"),
   discharge_port: z
     .string()
+    .max(200)
     .optional()
     .describe("Destination port (e.g. 'Chattogram')"),
   inland_delivery: z
     .object({
       required: z.boolean(),
-      mill_location: z.string().optional(),
+      mill_location: z.string().max(300).optional(),
     })
     .optional()
     .describe("Whether inland delivery to mill is needed"),
@@ -254,6 +260,7 @@ const logisticsSchema = z.object({
     .describe("Acceptable shipment date window"),
   vessel_route_constraints: z
     .string()
+    .max(500)
     .optional()
     .describe("Vessel size / route restrictions"),
 });
@@ -283,6 +290,7 @@ const financeSchema = z.object({
     .describe("Maximum credit days allowed by bank / policy"),
   bank_lc_constraints: z
     .string()
+    .max(500)
     .optional()
     .describe("Bank or L/C facility constraints (free text)"),
   fx_assumption: z
@@ -291,7 +299,8 @@ const financeSchema = z.object({
     .optional()
     .describe("Budget FX rate (BDT per USD)"),
   approved_suppliers: z
-    .array(z.string())
+    .array(z.string().max(200))
+    .max(50)
     .optional()
     .describe("Whitelisted supplier names"),
   max_supplier_concentration_pct: z
@@ -301,7 +310,8 @@ const financeSchema = z.object({
     .optional()
     .describe("Max % of total volume from a single supplier"),
   traceability_requirements: z
-    .array(z.string())
+    .array(z.string().max(100))
+    .max(20)
     .optional()
     .describe("Certifications required (e.g. ['BCI', 'organic', 'GOTS'])"),
 });

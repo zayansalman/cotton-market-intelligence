@@ -12,6 +12,7 @@ import {
   rateLimitExceededResponse,
 } from "@/lib/rate-limit";
 import { parseStrategyRequest } from "@/lib/schemas/strategy-request";
+import { safeParseBody, safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -245,8 +246,9 @@ async function runOpenAiStrategy(
   userMsg: string,
   apiKey: string
 ): Promise<Strategy | null> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method: "POST",
+    timeout: 30_000,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
@@ -291,10 +293,11 @@ async function runHuggingFaceStrategy(
     "Return ONLY valid JSON.\n\n" +
     userMsg;
 
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`,
     {
       method: "POST",
+      timeout: 30_000,
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
@@ -343,8 +346,11 @@ export async function POST(req: Request) {
   }
 
   try {
-    const body = await req.json();
-    const parsed = parseStrategyRequest(body);
+    const bodyOrError = await safeParseBody(req);
+    if (bodyOrError instanceof NextResponse) {
+      return applyRateLimitHeaders(bodyOrError, rateLimit.headers);
+    }
+    const parsed = parseStrategyRequest(bodyOrError);
 
     if (!parsed.ok) {
       return applyRateLimitHeaders(
@@ -385,9 +391,8 @@ export async function POST(req: Request) {
       rateLimit.headers
     );
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Unknown error";
     return applyRateLimitHeaders(
-      NextResponse.json({ error: msg }, { status: 500 }),
+      safeErrorResponse(e, "strategy"),
       rateLimit.headers
     );
   }

@@ -5,6 +5,7 @@ import {
   evaluateRequestRateLimit,
   rateLimitExceededResponse,
 } from "@/lib/rate-limit";
+import { safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
 
 interface YFQuote {
   timestamp: number[];
@@ -24,7 +25,8 @@ export async function GET(req: Request) {
     const fiveYearsAgo = now - 5 * 365 * 24 * 3600;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/CT%3DF?period1=${fiveYearsAgo}&period2=${now}&interval=1d`;
 
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
+      timeout: 15_000,
       headers: { "User-Agent": "Mozilla/5.0" },
       next: { revalidate: 3600 },
     });
@@ -144,9 +146,8 @@ export async function GET(req: Request) {
 
     return applyRateLimitHeaders(NextResponse.json(response), rateLimit.headers);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Unknown error";
     return applyRateLimitHeaders(
-      NextResponse.json({ error: msg }, { status: 500 }),
+      safeErrorResponse(e, "prices"),
       rateLimit.headers
     );
   }

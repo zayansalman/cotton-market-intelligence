@@ -12,6 +12,27 @@ interface ForecastEntry {
   direction: "up" | "down" | "flat";
 }
 
+interface HFForecast {
+  provider: string;
+  horizon: string;
+  predicted_return: number;
+  predicted_price: number;
+  direction: "up" | "down" | "flat";
+  confidence: number;
+  reasoning?: string;
+  model_used: string;
+}
+
+interface MarketSentiment {
+  aggregate_score: number;
+  label: "bullish" | "bearish" | "neutral";
+  confidence: number;
+  n_headlines: number;
+  positive_pct: number;
+  negative_pct: number;
+  neutral_pct: number;
+}
+
 interface PredictionResponse {
   version: number;
   generated_at: string;
@@ -26,7 +47,15 @@ interface PredictionResponse {
     direction_accuracy: number;
   };
   top_drivers: { feature: string; importance: number }[];
+  sentiment: MarketSentiment | null;
+  hf_forecasts: HFForecast[];
 }
+
+const SENTIMENT_STYLE: Record<string, string> = {
+  bullish: "text-green-400 bg-green-500/10 border-green-500/30",
+  bearish: "text-red-400 bg-red-500/10 border-red-500/30",
+  neutral: "text-zinc-400 bg-zinc-500/10 border-zinc-500/30",
+};
 
 const DIRECTION_STYLE: Record<string, string> = {
   up: "text-green-400",
@@ -144,6 +173,63 @@ export default function ForecastOverlay() {
                   >
                     {d.feature.replace(/_/g, " ")}
                   </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Market Sentiment */}
+          {prediction.sentiment && (
+            <div className={`mt-4 rounded-lg border p-3 ${SENTIMENT_STYLE[prediction.sentiment.label]}`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-semibold uppercase">
+                    News Sentiment: {prediction.sentiment.label}
+                  </span>
+                  <span className="text-xs ml-2 opacity-70">
+                    (score: {prediction.sentiment.aggregate_score.toFixed(2)}, {prediction.sentiment.n_headlines} headlines)
+                  </span>
+                </div>
+              </div>
+              <div className="flex gap-4 mt-1 text-xs opacity-70">
+                <span>Positive: {prediction.sentiment.positive_pct}%</span>
+                <span>Neutral: {prediction.sentiment.neutral_pct}%</span>
+                <span>Negative: {prediction.sentiment.negative_pct}%</span>
+              </div>
+            </div>
+          )}
+
+          {/* HF AI Forecasts */}
+          {prediction.hf_forecasts.length > 0 && (
+            <div className="mt-4">
+              <h4 className="text-xs font-semibold text-zinc-400 uppercase mb-2">
+                AI Model Forecasts (Hugging Face)
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {prediction.hf_forecasts.map((hf, i) => (
+                  <div key={i} className="rounded-lg bg-zinc-700/30 border border-zinc-700 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-zinc-400">
+                        {hf.provider === "hf_llm" ? "LLM Analyst" : "Chronos T5"}
+                      </span>
+                      <span className={`text-xs font-semibold ${DIRECTION_STYLE[hf.direction]}`}>
+                        {DIRECTION_ICON[hf.direction]} {hf.direction.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className={`text-lg font-bold mt-1 ${DIRECTION_STYLE[hf.direction]}`}>
+                      ${hf.predicted_price.toFixed(4)}/lb
+                    </div>
+                    <div className="text-xs text-zinc-500 mt-1">
+                      {hf.predicted_return > 0 ? "+" : ""}{(hf.predicted_return * 100).toFixed(2)}%
+                      ({hf.horizon}) | Conf: {(hf.confidence * 100).toFixed(0)}%
+                    </div>
+                    {hf.reasoning && (
+                      <p className="text-xs text-zinc-500 mt-2 italic">{hf.reasoning}</p>
+                    )}
+                    <div className="text-[10px] text-zinc-600 mt-1">
+                      Model: {hf.model_used}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>

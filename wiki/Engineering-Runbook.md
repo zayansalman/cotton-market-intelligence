@@ -184,7 +184,52 @@ When process changes:
   - `wiki/Enterprise-DLC.md`
   - this runbook
 
-## 12) Active forecasting issue stack (V3)
+## 12) Security controls and emergency playbook
+
+### Abuse protection (all routes)
+
+All API routes run `checkAbuse()` before rate limiting. Controls:
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `ABUSE_PROTECTION_ENABLED` | `1` (on) | Set `0` to disable all checks |
+| `API_KILL_SWITCH` | off | Set `1` to block ALL API traffic immediately |
+| `ABUSE_IP_DENYLIST` | empty | Comma-separated IPs to always block |
+| `ABUSE_IP_ALLOWLIST` | empty | Comma-separated IPs to always allow |
+| `ABUSE_BLOCK_THRESHOLD` | `3` | Suspicion score above which requests are blocked |
+
+### Usage quotas (strategy AI inference)
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `QUOTA_AI_DAILY_PER_IP` | `50` | Max AI strategy calls per IP per day |
+| `QUOTA_AI_MONTHLY_PER_IP` | `500` | Max AI strategy calls per IP per month |
+| `QUOTA_AI_GLOBAL_DAILY` | `1000` | Max AI calls globally per day |
+| `QUOTA_ALERT_THRESHOLD_PCT` | `80` | Log warning at this % of global budget |
+
+### Emergency response steps
+
+1. **Under active attack (scrapers/bots)**:
+   - Set `ABUSE_IP_DENYLIST` to block attacker IPs
+   - Lower `ABUSE_BLOCK_THRESHOLD` to increase sensitivity
+   - Monitor Vercel runtime logs for `[abuse]` entries
+
+2. **Runaway AI costs**:
+   - Lower `QUOTA_AI_GLOBAL_DAILY` immediately
+   - Set `STRATEGY_MODEL_PROVIDER=heuristic` to disable AI entirely
+   - Check Vercel runtime logs for `[quota]` warnings
+
+3. **Full emergency stop**:
+   - Set `API_KILL_SWITCH=1` — blocks all API traffic instantly
+   - All routes return 403
+   - Remove the var to restore service
+
+4. **False positives blocking real users**:
+   - Add their IP to `ABUSE_IP_ALLOWLIST`
+   - Or raise `ABUSE_BLOCK_THRESHOLD`
+   - Or set `ABUSE_PROTECTION_ENABLED=0` temporarily
+
+## 13) Active forecasting issue stack (V3)
 
 Current strategic initiative for price prediction and model quality:
 - Epic: [#23](https://github.com/zayansalman/cotton-market-intelligence/issues/23)

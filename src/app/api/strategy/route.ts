@@ -12,6 +12,9 @@ import {
   rateLimitExceededResponse,
 } from "@/lib/rate-limit";
 import { parseStrategyRequest } from "@/lib/schemas/strategy-request";
+import { safeParseBody, safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
+import { checkAiQuota, recordAiUsage } from "@/lib/usage-quota";
+import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -245,8 +248,9 @@ async function runOpenAiStrategy(
   userMsg: string,
   apiKey: string
 ): Promise<Strategy | null> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method: "POST",
+    timeout: 30_000,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
@@ -291,10 +295,11 @@ async function runHuggingFaceStrategy(
     "Return ONLY valid JSON.\n\n" +
     userMsg;
 
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`,
     {
       method: "POST",
+      timeout: 30_000,
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
@@ -337,14 +342,20 @@ async function runHuggingFaceStrategy(
 }
 
 export async function POST(req: Request) {
+  const abuse = checkAbuse(req);
+  if (abuse.blocked) return abuseBlockedResponse(abuse);
+
   const rateLimit = evaluateRequestRateLimit(req, "strategy");
   if (!rateLimit.allowed) {
     return rateLimitExceededResponse(rateLimit);
   }
 
   try {
-    const body = await req.json();
-    const parsed = parseStrategyRequest(body);
+    const bodyOrError = await safeParseBody(req);
+    if (bodyOrError instanceof NextResponse) {
+      return applyRateLimitHeaders(bodyOrError, rateLimit.headers);
+    }
+    const parsed = parseStrategyRequest(bodyOrError);
 
     if (!parsed.ok) {
       return applyRateLimitHeaders(
@@ -365,29 +376,43 @@ export async function POST(req: Request) {
       landedCost
     );
     const provider = resolveProvider();
+    const quota = checkAiQuota(req);
+    const allHeaders = { ...rateLimit.headers, ...quota.headers };
+
+    // If quota exhausted, skip AI and go straight to heuristic
+    if (provider !== "heuristic" && quota.degraded_to_heuristic) {
+      console.warn(`[strategy] Quota exceeded for request — degrading to heuristic. Reason: ${quota.reason}`);
+      const result = heuristicStrategy(benchmarks, tonnage, months, landedCost);
+      result.risk_factors = [
+        "AI quota exceeded — using statistical heuristic. Results may lack news context.",
+        ...result.risk_factors,
+      ];
+      return applyRateLimitHeaders(NextResponse.json(result), allHeaders);
+    }
 
     if (provider === "huggingface" && process.env.HF_TOKEN) {
       const strategy = await runHuggingFaceStrategy(userMsg, process.env.HF_TOKEN);
       if (strategy) {
-        return applyRateLimitHeaders(NextResponse.json(strategy), rateLimit.headers);
+        recordAiUsage(req);
+        return applyRateLimitHeaders(NextResponse.json(strategy), allHeaders);
       }
     }
 
     if (provider === "openai" && process.env.OPENAI_API_KEY) {
       const strategy = await runOpenAiStrategy(userMsg, process.env.OPENAI_API_KEY);
       if (strategy) {
-        return applyRateLimitHeaders(NextResponse.json(strategy), rateLimit.headers);
+        recordAiUsage(req);
+        return applyRateLimitHeaders(NextResponse.json(strategy), allHeaders);
       }
     }
 
     return applyRateLimitHeaders(
       NextResponse.json(heuristicStrategy(benchmarks, tonnage, months, landedCost)),
-      rateLimit.headers
+      allHeaders
     );
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Unknown error";
     return applyRateLimitHeaders(
-      NextResponse.json({ error: msg }, { status: 500 }),
+      safeErrorResponse(e, "strategy"),
       rateLimit.headers
     );
   }

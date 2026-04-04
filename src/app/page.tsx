@@ -15,6 +15,10 @@ import PresetSelector from "@/components/procurement/PresetSelector";
 import InputBriefSummary from "@/components/procurement/InputBriefSummary";
 import ScenarioManager from "@/components/scenarios/ScenarioManager";
 import ScenarioCompare from "@/components/scenarios/ScenarioCompare";
+import BacktestPanel from "@/components/BacktestPanel";
+import PortfolioDashboard from "@/components/portfolio/PortfolioDashboard";
+import AlertManager from "@/components/AlertManager";
+import ForecastOverlay from "@/components/ForecastOverlay";
 import { useScenarios } from "@/hooks/useScenarios";
 import { getScenario } from "@/lib/scenarios/store";
 
@@ -325,6 +329,22 @@ export default function Home() {
               </div>
             )
           )}
+
+          {/* Price forecast */}
+          <ForecastOverlay />
+
+          {/* Alerts */}
+          <AlertManager benchmarks={bm} strategy={strategy} />
+
+          {/* Multi-mill portfolio */}
+          <PortfolioDashboard
+            benchmarks={bm}
+            headlines={headlines}
+            landedCost={landedCost}
+          />
+
+          {/* Backtest panel */}
+          <BacktestPanel />
         </main>
       </div>
     </div>

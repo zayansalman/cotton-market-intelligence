@@ -16,6 +16,7 @@ import InputBriefSummary from "@/components/procurement/InputBriefSummary";
 import ScenarioManager from "@/components/scenarios/ScenarioManager";
 import ScenarioCompare from "@/components/scenarios/ScenarioCompare";
 import BacktestPanel from "@/components/BacktestPanel";
+import PortfolioDashboard from "@/components/portfolio/PortfolioDashboard";
 import { useScenarios } from "@/hooks/useScenarios";
 import { getScenario } from "@/lib/scenarios/store";
 
@@ -326,6 +327,13 @@ export default function Home() {
               </div>
             )
           )}
+
+          {/* Multi-mill portfolio */}
+          <PortfolioDashboard
+            benchmarks={bm}
+            headlines={headlines}
+            landedCost={landedCost}
+          />
 
           {/* Backtest panel */}
           <BacktestPanel />

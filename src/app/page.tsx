@@ -2,11 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useMarketData } from "@/hooks/useMarketData";
-import { useLandedCost } from "@/hooks/useLandedCost";
 import { useStrategy } from "@/hooks/useStrategy";
 import { usePurchaserInput } from "@/hooks/usePurchaserInput";
 import PriceChart from "@/components/PriceChart";
-import LandedCostCard from "@/components/LandedCostCard";
 import MarketMetrics from "@/components/MarketMetrics";
 import StrategyResults from "@/components/StrategyResults";
 import BasicBrief from "@/components/procurement/BasicBrief";
@@ -16,7 +14,6 @@ import InputBriefSummary from "@/components/procurement/InputBriefSummary";
 import ScenarioManager from "@/components/scenarios/ScenarioManager";
 import ScenarioCompare from "@/components/scenarios/ScenarioCompare";
 import BacktestPanel from "@/components/BacktestPanel";
-import PortfolioDashboard from "@/components/portfolio/PortfolioDashboard";
 import AlertManager from "@/components/AlertManager";
 import ForecastOverlay from "@/components/ForecastOverlay";
 import { useForecast } from "@/hooks/useForecast";
@@ -26,17 +23,6 @@ import { getScenario } from "@/lib/scenarios/store";
 export default function Home() {
   const { priceData, headlines, loading, error, setError } = useMarketData();
   const bm = priceData?.benchmarks;
-
-  const {
-    landedCost,
-    landedCostLoading,
-    basisCentsLb,
-    setBasisCentsLb,
-    freightUsdT,
-    setFreightUsdT,
-    fxBdtUsd,
-    setFxBdtUsd,
-  } = useLandedCost(bm);
 
   const {
     input,
@@ -54,7 +40,7 @@ export default function Home() {
   const { strategy, generating, generateStrategy } = useStrategy({
     priceData,
     headlines,
-    landedCost,
+    landedCost: null,
     purchaserInput: input,
     setError,
   });
@@ -247,19 +233,6 @@ export default function Home() {
 
           {bm && <MarketMetrics benchmarks={bm} />}
 
-          {bm && (
-            <LandedCostCard
-              data={landedCost}
-              loading={landedCostLoading}
-              basisCentsLb={basisCentsLb}
-              setBasisCentsLb={setBasisCentsLb}
-              freightUsdT={freightUsdT}
-              setFreightUsdT={setFreightUsdT}
-              fxBdtUsd={fxBdtUsd}
-              setFxBdtUsd={setFxBdtUsd}
-            />
-          )}
-
           {/* Price chart */}
           {priceData && (
             <div className="space-y-3">
@@ -349,13 +322,6 @@ export default function Home() {
 
           {/* Alerts */}
           <AlertManager benchmarks={bm} strategy={strategy} />
-
-          {/* Multi-mill portfolio */}
-          <PortfolioDashboard
-            benchmarks={bm}
-            headlines={headlines}
-            landedCost={landedCost}
-          />
 
           {/* Backtest panel */}
           <BacktestPanel />

@@ -17,6 +17,7 @@ import ScenarioManager from "@/components/scenarios/ScenarioManager";
 import ScenarioCompare from "@/components/scenarios/ScenarioCompare";
 import BacktestPanel from "@/components/BacktestPanel";
 import PortfolioDashboard from "@/components/portfolio/PortfolioDashboard";
+import AlertManager from "@/components/AlertManager";
 import { useScenarios } from "@/hooks/useScenarios";
 import { getScenario } from "@/lib/scenarios/store";
 
@@ -327,6 +328,9 @@ export default function Home() {
               </div>
             )
           )}
+
+          {/* Alerts */}
+          <AlertManager benchmarks={bm} strategy={strategy} />
 
           {/* Multi-mill portfolio */}
           <PortfolioDashboard

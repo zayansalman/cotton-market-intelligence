@@ -4,6 +4,55 @@ Cotton Market Intelligence (CMI) is a single-deploy Next.js 16 application that 
 
 ---
 
+## V4: Unified Decision Pipeline
+
+As of V4, the prediction stack and strategy engine are no longer siloed. They feed into a single unified signal (`computeUnifiedSignal`) that combines four information sources -- quantitative model forecasts, statistical heuristics, LLM analyst reasoning, and news sentiment -- into one weighted ensemble before the strategy engine generates a procurement plan.
+
+### End-to-End Flow
+
+```
+  DATA SOURCES (15+)
+  Yahoo Finance (12 tickers) + FRED (2 series) + RSS (7 feeds)
+        |
+        v
+  FEATURE ENGINEERING (39 features, 8 groups)
+  lag, momentum, volatility, regime, technical,
+  cross-market, lagged cross-market, calendar, sentiment
+        |
+        +---------------------+---------------------+
+        |                     |                     |
+        v                     v                     v
+  MODEL STACK (6 models)    HF AI MODELS          HEURISTIC
+  naive, mean, MA,          DistilRoBERTa         percentile rank
+  seasonal, ridge, GBM      Qwen 2.5 7B          z-score
+  walk-forward validated    Chronos T5            vol regime
+        |                     |                     |
+        v                     v                     v
+  +-----------------------------------------------------------+
+  |            computeUnifiedSignal()                          |
+  |                                                            |
+  |  Model: 40%  |  Heuristic: 25%  |  LLM: 20%  | Sent: 15% |
+  |                                                            |
+  |  -> weighted return -> direction -> confidence -> signal   |
+  |  -> decision_drivers[] (full transparency)                 |
+  +----------------------------+------------------------------+
+                               |
+                               v
+  STRATEGY GENERATION
+  signal -> allocation timing -> vol adjustment -> constraints
+  -> monthly_plan[], risk_factors[], executive_summary
+```
+
+### How It Differs From the Previous Architecture
+
+Previously, the prediction pipeline (`/api/prediction`) and strategy engine (`/api/strategy`) operated independently. The prediction API produced forecasts. The strategy API produced procurement plans. There was no formal mechanism for the strategy engine to incorporate model forecasts, and no weighted ensemble that combined all signals.
+
+In V4, the strategy route computes the unified signal inline before generating the procurement plan. The heuristic baseline is always computed. Sentiment analysis runs in parallel on headlines. When the ML model and LLM are available, their outputs feed into the same ensemble. The result is a single coherent signal where every source's contribution is recorded in `decision_drivers` and can be traced back to raw data.
+
+For the complete rationale behind every data source, feature group, model choice, weight assignment, and the end-to-end tracing from raw data to procurement recommendation, see [Model Decision Flow](Model-Decision-Flow.md).
+
+---
+
 ## 1. System Overview
 
 ```
@@ -14,7 +63,8 @@ Cotton Market Intelligence (CMI) is a single-deploy Next.js 16 application that 
   | ^VIX, CL=F,     |  | textileworld   |  | MPMICNMA669S     |
   | NG=F, ^TNX,      |  | usda.gov       |  |                  |
   | CNY=X, ^BDI,     |  | worldbank.org  |  |                  |
-  | ^GSPC            |  |                |  |                  |
+  | ^GSPC, ZS=F,    |  | reuters        |  |                  |
+  | ZW=F, ZC=F      |  | icac, f2f      |  |                  |
   +--------+---------+  +-------+--------+  +---------+--------+
            |                    |                      |
            v                    v                      v
@@ -37,9 +87,10 @@ Cotton Market Intelligence (CMI) is a single-deploy Next.js 16 application that 
   | Strategy       |  | Prediction    |  | Landed Cost    |
   | Engine         |  | Pipeline      |  | Calculator     |
   |                |  |               |  |                |
-  | HF -> OpenAI   |  | 12 factors    |  | Futures +      |
-  | -> heuristic   |  | 30 features   |  | basis + freight|
-  |                |  | 6 models      |  | + FX + duty    |
+  | Unified signal |  | 15 factors    |  | Futures +      |
+  | (4 sources,    |  | 39 features   |  | basis + freight|
+  |  weighted      |  | 6 models      |  | + FX + duty    |
+  |  ensemble)     |  | + HF AI       |  |                |
   +----------------+  +---------------+  +----------------+
            |                  |                  |
            v                  v                  v
@@ -86,11 +137,14 @@ useMarketData hook -> PriceChart + MarketMetrics
 ### 2.2 News Headline Flow
 
 ```
-4 RSS Feeds (parallel, 8s timeout each)
+7 RSS Feeds (parallel, 8s timeout each)
   |-- cottongrower.com/feed/
   |-- textileworld.com/feed/
   |-- usda.gov/rss/latest-news.xml
   |-- blogs.worldbank.org agriculture RSS
+  |-- reuters.com/markets/commodities/rss
+  |-- icac.org/rss
+  |-- fibre2fashion.com/rss/cotton-news.xml
   |
   v
 GET /api/headlines
@@ -101,7 +155,7 @@ GET /api/headlines
 useMarketData hook -> StrategyResults (context for AI)
 ```
 
-### 2.3 Strategy Generation Flow
+### 2.3 Strategy Generation Flow (V4 Unified)
 
 ```
 User clicks "Generate Strategy"
@@ -109,17 +163,20 @@ User clicks "Generate Strategy"
   v
 POST /api/strategy
   |-- Abuse check -> Rate limit -> Payload guard -> Schema validation
-  |-- Build user message (benchmarks + headlines + tonnage + months + landed cost)
-  |-- Resolve provider: HF_TOKEN? -> huggingface
-  |                     OPENAI_API_KEY + ALLOW_OPENAI_FALLBACK=1? -> openai
-  |                     else -> heuristic
+  |-- Compute heuristic baseline (always runs)
+  |-- Run sentiment analysis on headlines (parallel, non-blocking)
+  |-- computeUnifiedSignal(model, heuristic, llm, sentiment)
+  |-- Resolve AI provider: HF_TOKEN? -> huggingface
+  |                        OPENAI_API_KEY + ALLOW_OPENAI_FALLBACK=1? -> openai
+  |                        else -> heuristic with unified signal overlay
   |-- Check AI quota (per-IP daily/monthly, global daily)
   |-- If quota exhausted -> degrade to heuristic with warning
   |-- Try primary provider (30s timeout)
   |-- On failure -> fall through to heuristic
+  |-- Attach decision_drivers[] to response (source transparency)
   |-- Return Strategy JSON
   v
-useStrategy hook -> StrategyResults
+useStrategy hook -> StrategyResults (with decision driver breakdown)
 ```
 
 ---
@@ -156,7 +213,8 @@ Headline[]  // { title, summary, link, published }
 ```
 Strategy  // { signal, confidence, executive_summary, market_analysis,
           //   monthly_plan[], risk_factors[], next_actions[], key_levels,
-          //   source: "ai"|"heuristic", provider: "huggingface"|"openai"|"heuristic" }
+          //   source: "ai"|"heuristic", provider: "huggingface"|"openai"|"heuristic",
+          //   decision_drivers[], predicted_return }
 ```
 
 **`GET /api/prediction?horizon=21d`** -- Query: `horizon` (5d, 21d, 63d). Returns:
@@ -218,6 +276,8 @@ Execute in order, with fallthrough on failure:
         else                    -> HOLD (conf 50)
       Monthly plan: exponential weighting, flattened if vol > 30%
       Includes: landed cost context, MA analysis, volatility assessment
+
+All providers: unified signal overlaid on final output with decision_drivers[]
 ```
 
 ### 4.2 Quota-Based Degradation
@@ -229,7 +289,7 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
 ## 5. V3 Prediction Pipeline
 
 ```
-                        DATA SOURCES (12 factors)
+                        DATA SOURCES (15 factors)
   +----------+  +----------+  +--------+  +--------+  +--------+
   | Cotton   |  | DXY      |  | VIX    |  | Crude  |  | NatGas |
   | CT=F     |  | DX-Y.NYB |  | ^VIX   |  | CL=F   |  | NG=F   |
@@ -240,7 +300,12 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
   | ^TNX     |  | CNY=X    |  | ^BDI   |  | ^GSPC  |  | T5YIE  |
   +----+-----+  +----+-----+  +---+----+  +---+----+  | China  |
        |              |            |            |       | PMI    |
-       v              v            v            v       +---+----+
+  +----+-----+  +----+-----+                   |       +---+----+
+  | Soybean  |  | Wheat    |                   |           |
+  | ZS=F     |  | ZW=F     |  +--------+       |           |
+  +----+-----+  +----+-----+  | Corn   |       |           |
+       |              |        | ZC=F   |       |           |
+       v              v        +---+----+       v           v
   +----------------------------------------------------------+  |
   |              runPipeline() -- parallel fetch              |<-+
   |  Promise.allSettled -> graceful partial failure            |
@@ -256,15 +321,17 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
                               |
                               v
   +----------------------------------------------------------+
-  |              buildFeatures() -- ~30 features              |
+  |              buildFeatures() -- 39 features               |
   |                                                          |
   |  Lag group:    cotton_lag_5d, cotton_lag_21d, ...         |
   |  Momentum:     cotton_ret_5d, cotton_ret_21d, ...        |
-  |  Volatility:   cotton_vol_21d, cotton_vol_63d            |
-  |  Cross-market: dxy_ret_21d, crude_cotton_ratio, ...      |
-  |  Calendar:     month_sin, month_cos, day_of_week         |
-  |  Technical:    rsi_14d, ma_cross_50_200, pct_rank_252d   |
-  |  Regime:       vol regime indicators                     |
+  |  Volatility:   cotton_vol_10d, cotton_vol_21d, ...       |
+  |  Regime:       vol_regime, trend_regime, pct_rank_*      |
+  |  Cross-market: dxy_ret_21d, cotton_oil_ratio, ...        |
+  |  Lagged X-mkt: dxy_lag_5d, oil_lag_21d, vix_lag_5d      |
+  |  Calendar:     month, quarter, is_planting_season, ...   |
+  |  Technical:    rsi_14, ma_cross_50_200, dist_from_52w_*  |
+  |  Sentiment:    sentiment_score                           |
   |                                                          |
   |  Forward returns: fwd_return_5d, fwd_return_21d,         |
   |                   fwd_return_63d (targets)                |
@@ -287,7 +354,7 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
                               v
   +----------------------------------------------------------+
   |              Walk-Forward Validation                       |
-  |  Expanding window, step_size configurable                 |
+  |  Expanding window, 21-day step, regime slicing            |
   |  Per-step: train -> predict -> record actual vs predicted |
   |  Metrics sliced by volatility regime and trend regime     |
   +---------------------------+------------------------------+
@@ -296,18 +363,21 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
   +----------------------------------------------------------+
   |              Scorecard + Rating                            |
   |  green/yellow/red per horizon                             |
-  |  go/no-go criteria: beats naive, direction > 50%,         |
+  |  go/no-go criteria: beats naive, direction > 55%,         |
   |  RMSE below threshold                                    |
   +---------------------------+------------------------------+
                               |
                               v
   +----------------------------------------------------------+
-  |  GET /api/prediction -> ForecastOverlay + PriceChart      |
+  |              Unified Signal Integration                    |
   |                                                          |
-  |  Also runs in parallel (non-blocking):                   |
-  |  - HF sentiment (distilroberta-financial-sentiment)      |
-  |  - HF LLM forecast (Qwen quant analyst prompt)          |
-  |  - HF Chronos T5 (time-series foundation model)          |
+  |  Champion model output feeds computeUnifiedSignal()      |
+  |  alongside HF AI models and heuristic baseline           |
+  |                                                          |
+  |  HF models (parallel, non-blocking):                     |
+  |  - DistilRoBERTa (financial sentiment)                   |
+  |  - Qwen 2.5 7B (LLM quant analyst forecast)             |
+  |  - Chronos T5 (time-series foundation model)             |
   +----------------------------------------------------------+
 ```
 
@@ -413,7 +483,8 @@ page.tsx (client component, root orchestrator)
   |       |-- PriceChart     -> Recharts area chart (5Y data, MA overlays, forecast)
   |       |-- ScenarioCompare-> side-by-side diff of two saved scenarios
   |       |-- StrategyResults-> signal badge, executive summary, monthly plan,
-  |       |                     risk factors, next actions, key levels
+  |       |                     risk factors, next actions, key levels,
+  |       |                     decision driver breakdown
   |       |-- ForecastOverlay-> V3 prediction details, drivers, scorecard
   |       |-- AlertManager   -> price/signal alert configuration
   |       |-- PortfolioDashboard -> multi-mill aggregate view

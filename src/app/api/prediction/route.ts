@@ -19,6 +19,10 @@ import { runPipeline, alignToDaily } from "@/lib/pipeline/runner";
 import { buildFeatures, FEATURE_SPECS } from "@/lib/pipeline/features";
 import { trainAndEvaluate } from "@/lib/models/trainer";
 import type { Horizon } from "@/lib/models/types";
+import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
+import { llmForecast, chronosForecast } from "@/lib/hf/forecast";
+import type { MarketSentiment } from "@/lib/hf/sentiment";
+import type { HFForecast } from "@/lib/hf/forecast";
 
 interface PredictionResponse {
   /** API version. */
@@ -40,6 +44,10 @@ interface PredictionResponse {
   };
   /** Top feature drivers (absolute coefficient magnitude). */
   top_drivers: { feature: string; importance: number }[];
+  /** HF-powered sentiment analysis on headlines. */
+  sentiment: MarketSentiment | null;
+  /** HF-powered AI forecasts (LLM + Chronos). */
+  hf_forecasts: HFForecast[];
 }
 
 interface ForecastEntry {
@@ -165,8 +173,66 @@ export async function GET(req: Request) {
       }
     }
 
+    // --- HF-powered enhancements (parallel, non-blocking) ---
+    const benchmarks = pipelineOutput.factors
+      .find((f) => f.meta.id === "cotton_close")?.data ?? [];
+
+    // Fetch headlines for sentiment
+    let sentiment: MarketSentiment | null = null;
+    let hfForecasts: HFForecast[] = [];
+    try {
+      const headlinesRes = await fetch(new URL("/api/headlines", req.url).toString());
+      const headlines = headlinesRes.ok ? await headlinesRes.json() : [];
+
+      // Run HF sentiment + forecasts in parallel
+      const bmForHF: import("@/lib/types").Benchmarks = {
+        current_price: currentPrice,
+        price_date: latestRow.date,
+        change_30d_pct: (latestRow.features.cotton_ret_21d ?? 0) * 100,
+        change_90d_pct: (latestRow.features.cotton_ret_63d ?? 0) * 100,
+        pct_rank_1y: latestRow.features.pct_rank_252d ?? 0.5,
+        pct_rank_5y: latestRow.features.pct_rank_252d ?? 0.5,
+        z_score_1y: 0,
+        vol_30d_ann: latestRow.features.cotton_vol_21d ?? 20,
+        vol_90d_ann: latestRow.features.cotton_vol_63d ?? 20,
+        ma_50d: currentPrice,
+        ma_200d: currentPrice,
+        above_ma_50d: (latestRow.features.ma_cross_50_200 ?? 0) > 0,
+        above_ma_200d: true,
+        high_1y: currentPrice * 1.1,
+        low_1y: currentPrice * 0.9,
+      };
+
+      const horizonDays = horizon === "5d" ? 5 : horizon === "21d" ? 21 : 63;
+      const priceHistoryForChronos = pipelineOutput.target.map((p) => p.value);
+
+      const [sentimentResult, llmResult, chronosResult] = await Promise.allSettled([
+        analyzeHeadlineSentiment(headlines),
+        llmForecast(bmForHF, null, latestRow.features, horizon),
+        chronosForecast(priceHistoryForChronos, horizonDays),
+      ]);
+
+      sentiment = sentimentResult.status === "fulfilled" ? sentimentResult.value : null;
+
+      // If we got sentiment, retry LLM forecast with it for better quality
+      if (sentiment && llmResult.status !== "fulfilled") {
+        try {
+          const retryLlm = await llmForecast(bmForHF, sentiment, latestRow.features, horizon);
+          if (retryLlm) hfForecasts.push(retryLlm);
+        } catch { /* swallow */ }
+      } else if (llmResult.status === "fulfilled" && llmResult.value) {
+        hfForecasts.push(llmResult.value);
+      }
+
+      if (chronosResult.status === "fulfilled" && chronosResult.value) {
+        hfForecasts.push(chronosResult.value);
+      }
+    } catch (e) {
+      console.warn("[prediction] HF enhancement failed (non-fatal):", e);
+    }
+
     const response: PredictionResponse = {
-      version: 1,
+      version: 2,
       generated_at: new Date().toISOString(),
       current_price: Math.round(currentPrice * 10000) / 10000,
       current_date: latestRow.date,
@@ -179,6 +245,8 @@ export async function GET(req: Request) {
         direction_accuracy: champion.direction_accuracy,
       },
       top_drivers: topDrivers,
+      sentiment,
+      hf_forecasts: hfForecasts,
     };
 
     return applyRateLimitHeaders(NextResponse.json(response), rateLimit.headers);

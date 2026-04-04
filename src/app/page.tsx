@@ -19,6 +19,7 @@ import BacktestPanel from "@/components/BacktestPanel";
 import PortfolioDashboard from "@/components/portfolio/PortfolioDashboard";
 import AlertManager from "@/components/AlertManager";
 import ForecastOverlay from "@/components/ForecastOverlay";
+import { useForecast } from "@/hooks/useForecast";
 import { useScenarios } from "@/hooks/useScenarios";
 import { getScenario } from "@/lib/scenarios/store";
 
@@ -70,6 +71,7 @@ export default function Home() {
     setCompareIds,
   } = useScenarios();
 
+  const { forecast, forecastLoading, fetchForecast } = useForecast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [timeframe, setTimeframe] = useState<
     "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL"
@@ -286,10 +288,22 @@ export default function Home() {
                     {displayedPrices[displayedPrices.length - 1].date}
                   </span>
                 )}
+                <button
+                  onClick={fetchForecast}
+                  disabled={forecastLoading}
+                  className={`ml-auto px-3 py-1 text-xs rounded-md border transition-colors ${
+                    forecast
+                      ? "bg-purple-600/20 border-purple-500 text-purple-300"
+                      : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-zinc-200"
+                  } disabled:opacity-50`}
+                >
+                  {forecastLoading ? "Computing..." : forecast ? "Refresh Forecast" : "Show Forecast"}
+                </button>
               </div>
               <PriceChart
                 prices={displayedPrices}
                 benchmarks={priceData.benchmarks}
+                forecast={forecast}
               />
             </div>
           )}

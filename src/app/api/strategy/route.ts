@@ -13,6 +13,7 @@ import {
 } from "@/lib/rate-limit";
 import { parseStrategyRequest } from "@/lib/schemas/strategy-request";
 import { safeParseBody, safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
+import { checkAiQuota, recordAiUsage } from "@/lib/usage-quota";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -371,24 +372,39 @@ export async function POST(req: Request) {
       landedCost
     );
     const provider = resolveProvider();
+    const quota = checkAiQuota(req);
+    const allHeaders = { ...rateLimit.headers, ...quota.headers };
+
+    // If quota exhausted, skip AI and go straight to heuristic
+    if (provider !== "heuristic" && quota.degraded_to_heuristic) {
+      console.warn(`[strategy] Quota exceeded for request — degrading to heuristic. Reason: ${quota.reason}`);
+      const result = heuristicStrategy(benchmarks, tonnage, months, landedCost);
+      result.risk_factors = [
+        "AI quota exceeded — using statistical heuristic. Results may lack news context.",
+        ...result.risk_factors,
+      ];
+      return applyRateLimitHeaders(NextResponse.json(result), allHeaders);
+    }
 
     if (provider === "huggingface" && process.env.HF_TOKEN) {
       const strategy = await runHuggingFaceStrategy(userMsg, process.env.HF_TOKEN);
       if (strategy) {
-        return applyRateLimitHeaders(NextResponse.json(strategy), rateLimit.headers);
+        recordAiUsage(req);
+        return applyRateLimitHeaders(NextResponse.json(strategy), allHeaders);
       }
     }
 
     if (provider === "openai" && process.env.OPENAI_API_KEY) {
       const strategy = await runOpenAiStrategy(userMsg, process.env.OPENAI_API_KEY);
       if (strategy) {
-        return applyRateLimitHeaders(NextResponse.json(strategy), rateLimit.headers);
+        recordAiUsage(req);
+        return applyRateLimitHeaders(NextResponse.json(strategy), allHeaders);
       }
     }
 
     return applyRateLimitHeaders(
       NextResponse.json(heuristicStrategy(benchmarks, tonnage, months, landedCost)),
-      rateLimit.headers
+      allHeaders
     );
   } catch (e) {
     return applyRateLimitHeaders(

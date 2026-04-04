@@ -15,6 +15,7 @@ import PresetSelector from "@/components/procurement/PresetSelector";
 import InputBriefSummary from "@/components/procurement/InputBriefSummary";
 import ScenarioManager from "@/components/scenarios/ScenarioManager";
 import ScenarioCompare from "@/components/scenarios/ScenarioCompare";
+import BacktestPanel from "@/components/BacktestPanel";
 import { useScenarios } from "@/hooks/useScenarios";
 import { getScenario } from "@/lib/scenarios/store";
 
@@ -325,6 +326,9 @@ export default function Home() {
               </div>
             )
           )}
+
+          {/* Backtest panel */}
+          <BacktestPanel />
         </main>
       </div>
     </div>

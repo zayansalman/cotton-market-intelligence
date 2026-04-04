@@ -1,55 +1,46 @@
-# Cotton Market Intelligence Wiki
+# Cotton Market Intelligence (CMI) — Wiki
 
-This wiki describes the **current live MVP** running on Vercel and the next steps in the product roadmap.
+Production cotton procurement intelligence platform for South Asian spinning mills. AI-powered strategy generation, price prediction, and portfolio management.
 
-## Live status
+**Live:** https://cmi-notebooks.vercel.app | **Dev:** https://cmi-notebooks-dev.vercel.app
 
-- **Production URL:** [https://cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app)
-- **Stack:** Next.js + TypeScript + Vercel
-- **Mode:** AI-assisted strategy generation with deterministic fallback
+---
 
-## What is live now
+## Architecture and Design
 
-1. **Market benchmarks**
-   - Cotton #2 futures via Yahoo Finance
-   - 1Y/5Y percentile, z-score, volatility, moving averages, momentum
+| Document | Description |
+|----------|-------------|
+| [Architecture](Architecture.md) | System design, data flows, API layer, component tree, deployment |
+| [Technical Decisions](Technical-Decisions.md) | Every engineering trade-off with rationale and alternatives |
+| [Quant Rationale](Quant-Rationale.md) | Statistical and quantitative design decisions explained |
 
-2. **News layer**
-   - RSS ingestion from cotton/agri sources
-   - Headline context shown in dashboard and included in strategy request
+## Strategy and Procurement
 
-3. **Procurement strategy engine**
-   - Input: company, required tonnes, horizon months
-   - Output: signal (`STRONG_BUY/BUY/HOLD/AVOID`), confidence, rationale, monthly roadmap, risks, actions
-   - Uses OpenAI when configured; falls back to deterministic heuristic logic
+| Document | Description |
+|----------|-------------|
+| [Strategic Procurement](Strategic-Procurement.md) | V2 constraint-aware strategy engine logic and decision framework |
+| [Purchaser Inputs — Bangladesh](Purchaser-Inputs-Bangladesh.md) | Full input schema: 6 field groups, presets, defaults, examples |
+| [V2 Worked Scenarios](V2-Worked-Scenarios.md) | Example procurement scenarios with expected outputs |
 
-4. **Operator dashboard**
-   - Price chart + moving averages
-   - Signal badge and analysis text
-   - Monthly purchase allocation (chart + table)
-   - Download strategy JSON
+## V3 Price Prediction
 
-## Architecture pages
+| Document | Description |
+|----------|-------------|
+| [Price Prediction Roadmap](Price-Prediction-Roadmap.md) | V3 program: 9 workstreams, issue tracker, delivery sequence |
+| [V3 Predictor Universe](V3-Predictor-Universe.md) | 60+ candidate predictors across 8 factor groups |
+| [V3 Data Dictionary](V3-Data-Dictionary.md) | Factor registry: IDs, frequencies, lags, sources, directions |
 
-- `wiki/How-It-Works.md` — current technical flow
-- `wiki/Strategic-Procurement.md` — strategy logic and decision framing
-- `wiki/Enterprise-DLC.md` — agile workflow, CI/CD, branch model
-- `wiki/Engineering-Runbook.md` — IDE-agnostic continuation runbook (setup, CI/CD, Vercel dev/prod, release, rollback)
-- `wiki/Price-Prediction-Roadmap.md` — full V3 issue tracker for forecasting, backtesting, and landing-page prediction delivery
+## Operations
 
-## Context pages
+| Document | Description |
+|----------|-------------|
+| [Engineering Runbook](Engineering-Runbook.md) | Setup, branching, CI/CD, Vercel deploy, security controls, emergency playbook |
+| [Enterprise DLC](Enterprise-DLC.md) | Agile workflow, PR policy, environment governance |
 
-- `wiki/Business-Case.md`
-- `wiki/Business-Model.md`
-- `wiki/Bangladesh-Market.md`
+## Business Context
 
-## Notes
-
-Older docs describing Python CLI / Docker / Streamlit are superseded by the current Vercel stack.
-
-## Active V3 initiative
-
-Forecasting and prediction capability is now tracked as an issue-driven program:
-- Epic: [#23](https://github.com/zayansalman/cotton-market-intelligence/issues/23)
-- Execution issues: [#24](https://github.com/zayansalman/cotton-market-intelligence/issues/24) to [#32](https://github.com/zayansalman/cotton-market-intelligence/issues/32)
-
+| Document | Description |
+|----------|-------------|
+| [Bangladesh Market](Bangladesh-Market.md) | Regional market context and procurement dynamics |
+| [Business Case](Business-Case.md) | Market opportunity and value proposition |
+| [Business Model](Business-Model.md) | Revenue model and customer segments |

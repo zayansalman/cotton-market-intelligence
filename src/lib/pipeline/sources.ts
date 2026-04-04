@@ -94,8 +94,13 @@ export function buildFactorFetchers(): FactorFetcher[] {
   const fredKey = process.env.FRED_API_KEY;
 
   return [
-    // === SUPPLY ===
-    // Cotton price itself (used as input feature — lags, momentum)
+    // ================================================================
+    // TARGET VARIABLE
+    // Cotton #2 ICE futures — the contract Bangladesh mills price
+    // against. Used to derive lag, momentum, volatility, and regime
+    // features. Prices >5 are in cents/lb (Yahoo inconsistency),
+    // normalized to $/lb.
+    // ================================================================
     {
       meta: {
         id: "cotton_close",
@@ -117,7 +122,14 @@ export function buildFactorFetchers(): FactorFetcher[] {
       },
     },
 
-    // === MACRO: USD index ===
+    // ================================================================
+    // MACRO: US DOLLAR INDEX (DXY)
+    // Cotton is USD-denominated. DXY up → cotton more expensive for
+    // non-USD buyers (Bangladesh, India, China) → demand falls →
+    // price falls. Inverse correlation R ~ -0.3 to -0.6. Currency
+    // moves lead commodity repricing by 3-7 trading days, which is
+    // why we compute lagged DXY features (dxy_lag_5d, dxy_lag_21d).
+    // ================================================================
     {
       meta: {
         id: "dxy",
@@ -132,7 +144,13 @@ export function buildFactorFetchers(): FactorFetcher[] {
       fetch: () => fetchYahoo("DX-Y.NYB", 5),
     },
 
-    // === MACRO: VIX ===
+    // ================================================================
+    // MACRO: VIX (VOLATILITY INDEX)
+    // Risk-off proxy. Commodities are risk assets held by
+    // institutional investors. VIX spike → risk-off → positions
+    // unwound → cotton sells off. Also: high uncertainty causes
+    // mills to defer procurement (wait-and-see). Inverse correlation.
+    // ================================================================
     {
       meta: {
         id: "vix",
@@ -147,7 +165,16 @@ export function buildFactorFetchers(): FactorFetcher[] {
       fetch: () => fetchYahoo("^VIX", 5),
     },
 
-    // === COMPETING: Crude Oil ===
+    // ================================================================
+    // COMPETING COMMODITY: WTI CRUDE OIL
+    // Polyester is cotton's primary synthetic substitute. The
+    // transmission chain: oil → naphtha → PX → PTA → PET →
+    // polyester fiber. Oil up → polyester production cost up →
+    // cotton's relative competitiveness improves → cotton demand
+    // up → cotton price up. Also: oil drives ocean freight costs
+    // (shipping cotton is fuel-intensive). Positive correlation
+    // with 2-4 week lag through the petrochemical chain.
+    // ================================================================
     {
       meta: {
         id: "crude_oil",
@@ -162,7 +189,14 @@ export function buildFactorFetchers(): FactorFetcher[] {
       fetch: () => fetchYahoo("CL=F", 5),
     },
 
-    // === COMPETING: Polyester (proxy: PET/PX through oil) ===
+    // ================================================================
+    // COMPETING: NATURAL GAS (POLYESTER ENERGY PROXY)
+    // PET production (polyester feedstock) is energy-intensive.
+    // Natural gas is a primary energy input for Asian PET plants.
+    // NG up → polyester cost up → cotton substitution demand up.
+    // Also: cotton ginning and textile processing use energy.
+    // Weaker signal than crude oil but adds information.
+    // ================================================================
     {
       meta: {
         id: "natural_gas",
@@ -177,7 +211,13 @@ export function buildFactorFetchers(): FactorFetcher[] {
       fetch: () => fetchYahoo("NG=F", 5),
     },
 
-    // === MACRO: 10Y Treasury yield ===
+    // ================================================================
+    // MACRO: US 10Y TREASURY YIELD
+    // Higher real rates → higher carry cost for holding physical
+    // commodities → incentive to sell inventory → price pressure
+    // down. Also: rising yields signal tightening monetary policy
+    // → risk-off for commodity allocations. Inverse correlation.
+    // ================================================================
     {
       meta: {
         id: "us10y",
@@ -192,7 +232,13 @@ export function buildFactorFetchers(): FactorFetcher[] {
       fetch: () => fetchYahoo("^TNX", 5),
     },
 
-    // === MACRO: CNY/USD ===
+    // ================================================================
+    // MACRO: CNY/USD EXCHANGE RATE
+    // China consumes ~30% of global cotton. CNY weakness → cotton
+    // more expensive for Chinese mills → demand falls → global
+    // cotton price falls. This is the single most important FX
+    // pair for cotton after DXY. Inverse correlation.
+    // ================================================================
     {
       meta: {
         id: "cny_usd",
@@ -207,7 +253,13 @@ export function buildFactorFetchers(): FactorFetcher[] {
       fetch: () => fetchYahoo("CNY=X", 5),
     },
 
-    // === FREIGHT: Baltic Dry Index ===
+    // ================================================================
+    // FREIGHT: BALTIC DRY INDEX (BDI)
+    // Proxy for global bulk shipping costs. Cotton is shipped in
+    // containers, but BDI correlates with general freight rates.
+    // BDI up → shipping cost up → CIF cotton price up → positive
+    // correlation. Also signals global trade activity (demand).
+    // ================================================================
     {
       meta: {
         id: "bdiy",
@@ -222,7 +274,13 @@ export function buildFactorFetchers(): FactorFetcher[] {
       fetch: () => fetchYahoo("^BDI", 3),
     },
 
-    // === DEMAND: S&P 500 (risk appetite proxy) ===
+    // ================================================================
+    // DEMAND: S&P 500 (RISK APPETITE / GROWTH PROXY)
+    // Equity markets up → economic growth expectations up → textile
+    // demand (apparel) up → cotton demand up. Also: S&P 500 is a
+    // proxy for institutional risk appetite — risk-on environments
+    // support commodity allocations. Positive correlation.
+    // ================================================================
     {
       meta: {
         id: "sp500",
@@ -237,7 +295,13 @@ export function buildFactorFetchers(): FactorFetcher[] {
       fetch: () => fetchYahoo("^GSPC", 5),
     },
 
-    // === MACRO: Breakeven inflation ===
+    // ================================================================
+    // MACRO: 5Y BREAKEVEN INFLATION RATE
+    // Market-implied inflation expectations. Higher inflation →
+    // commodities are real assets that benefit from inflation →
+    // cotton price up. This is the "inflation hedge" signal.
+    // FRED series T5YIE. 1-day publication lag.
+    // ================================================================
     {
       meta: {
         id: "breakeven_5y",
@@ -268,7 +332,13 @@ export function buildFactorFetchers(): FactorFetcher[] {
       fetch: async () => [],
     },
 
-    // === DEMAND: China textile PMI proxy ===
+    // ================================================================
+    // DEMAND: CHINA MANUFACTURING PMI
+    // China is the world's largest cotton consumer (~30% of global
+    // mill use). PMI > 50 = expansion → mills buying cotton →
+    // demand up → price up. 3-day publication lag (released 1st
+    // of month for prior month). FRED series MPMICNMA669S.
+    // ================================================================
     {
       meta: {
         id: "china_pmi_mfg",
@@ -283,7 +353,17 @@ export function buildFactorFetchers(): FactorFetcher[] {
       fetch: () => fetchFred("MPMICNMA669S", fredKey),
     },
 
-    // === COMPETING: Soybean futures (planting competition) ===
+    // ================================================================
+    // COMPETING: SOYBEAN FUTURES (PLANTING COMPETITION)
+    // The strongest structural cross-commodity signal for cotton.
+    // US Cotton Belt farmers choose between cotton and soybeans
+    // based on relative profitability every planting season.
+    // Soybean futures up → farmers plant more soybeans → less
+    // cotton acreage → cotton supply contracts → cotton price
+    // rises with 6-9 month lag. The cotton/soybean ratio is
+    // tracked by every ag commodity desk. USDA Prospective
+    // Plantings (March) is the key event. Inverse direction.
+    // ================================================================
     {
       meta: {
         id: "soybean",
@@ -297,7 +377,15 @@ export function buildFactorFetchers(): FactorFetcher[] {
       },
       fetch: () => fetchYahoo("ZS=F", 5),
     },
-    // Wheat futures (planting competition)
+    // ================================================================
+    // COMPETING: WHEAT FUTURES (PLANTING COMPETITION)
+    // Acreage competition in the Southern Plains (Texas, Oklahoma).
+    // Winter wheat and cotton share irrigated acres. Also a broader
+    // ag commodity cycle proxy — when the grain complex rallies,
+    // cotton follows with lag because input costs (fertilizer,
+    // fuel, labor) correlate and farmer profitability shifts.
+    // Weaker signal than soybean but real. Inverse direction.
+    // ================================================================
     {
       meta: {
         id: "wheat",
@@ -311,7 +399,15 @@ export function buildFactorFetchers(): FactorFetcher[] {
       },
       fetch: () => fetchYahoo("ZW=F", 5),
     },
-    // Corn futures (planting competition)
+    // ================================================================
+    // COMPETING: CORN FUTURES (ACREAGE + AG COMPLEX BAROMETER)
+    // Acreage switching in Delta states (Mississippi, Arkansas).
+    // Corn is the deepest agricultural futures market and acts as
+    // a barometer for the entire ag complex — corn rallies drag
+    // cotton via macro ag sentiment and shared input costs.
+    // Also: corn/ethanol demand affects fuel prices → freight.
+    // Inverse direction for acreage competition mechanism.
+    // ================================================================
     {
       meta: {
         id: "corn",

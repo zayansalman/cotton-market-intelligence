@@ -57,11 +57,28 @@ export function useForecast() {
 
       const dates = futureDates(data.current_date, horizonDays[primary.horizon] ?? 21);
 
-      // Interpolate from current price to forecast price
+      // If local model predicts flat but HF models have a view, blend in HF signal
       const startPrice = data.current_price;
-      const endPrice = primary.predicted_price;
-      const endLower = primary.lower_price;
-      const endUpper = primary.upper_price;
+      let endPrice = primary.predicted_price;
+      let endLower = primary.lower_price;
+      let endUpper = primary.upper_price;
+
+      // Blend HF forecasts if available and local model is near-flat
+      if (data.hf_forecasts && data.hf_forecasts.length > 0) {
+        const localReturn = Math.abs((endPrice - startPrice) / startPrice);
+        if (localReturn < 0.003) { // Model is essentially flat — blend HF signal
+          const hfPrices = data.hf_forecasts.map((f) => f.predicted_price).filter((p) => p > 0);
+          if (hfPrices.length > 0) {
+            const hfAvg = hfPrices.reduce((s, p) => s + p, 0) / hfPrices.length;
+            // 50/50 blend between local and HF when local is flat
+            endPrice = Math.round(((endPrice + hfAvg) / 2) * 10000) / 10000;
+            // Widen confidence interval to reflect blending uncertainty
+            const spread = Math.abs(endPrice - startPrice) * 1.5;
+            endLower = Math.round((endPrice - spread) * 10000) / 10000;
+            endUpper = Math.round((endPrice + spread) * 10000) / 10000;
+          }
+        }
+      }
 
       for (let i = 0; i < dates.length; i++) {
         const t = (i + 1) / dates.length; // 0 to 1

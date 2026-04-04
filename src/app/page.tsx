@@ -18,6 +18,7 @@ import ScenarioCompare from "@/components/scenarios/ScenarioCompare";
 import BacktestPanel from "@/components/BacktestPanel";
 import PortfolioDashboard from "@/components/portfolio/PortfolioDashboard";
 import AlertManager from "@/components/AlertManager";
+import ForecastOverlay from "@/components/ForecastOverlay";
 import { useScenarios } from "@/hooks/useScenarios";
 import { getScenario } from "@/lib/scenarios/store";
 
@@ -328,6 +329,9 @@ export default function Home() {
               </div>
             )
           )}
+
+          {/* Price forecast */}
+          <ForecastOverlay />
 
           {/* Alerts */}
           <AlertManager benchmarks={bm} strategy={strategy} />

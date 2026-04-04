@@ -152,18 +152,26 @@ export function trainAndEvaluate(
     results.push(result);
   }
 
-  // Champion selection: lowest RMSE among non-baseline models,
-  // but only if it beats the naive baseline
+  // Champion selection: composite score balancing RMSE and direction accuracy.
+  // A model with 66% directional accuracy and slightly higher RMSE is more
+  // useful for procurement than naive (0% signal). We use:
+  //   score = -RMSE + 0.5 * direction_accuracy
+  // This penalizes large errors but rewards directional correctness.
+  // Champion must still beat naive on at least one metric to qualify.
   const naiveResult = results.find((r) => r.model_id === "naive");
-  const nonBaseline = results.filter((r) =>
-    r.model_id !== "naive" && r.model_id !== "hist_mean" &&
-    r.model_id !== "ma_return" && r.model_id !== "seasonal_naive"
-  );
+  const candidates = results.filter((r) => r.model_id !== "naive");
 
-  // Sort by RMSE ascending
-  const sorted = [...nonBaseline].sort((a, b) => a.rmse - b.rmse);
+  const score = (r: ModelResult) =>
+    -r.rmse + 0.5 * r.direction_accuracy;
+
+  const sorted = [...candidates].sort((a, b) => score(b) - score(a));
+
+  // Champion: best scoring model that improves over naive on RMSE or direction
   const champion =
-    sorted.length > 0 && naiveResult && sorted[0].rmse < naiveResult.rmse
+    sorted.length > 0 &&
+    naiveResult &&
+    (sorted[0].rmse < naiveResult.rmse ||
+     sorted[0].direction_accuracy > naiveResult.direction_accuracy + 0.05)
       ? sorted[0]
       : naiveResult ?? results[0];
 

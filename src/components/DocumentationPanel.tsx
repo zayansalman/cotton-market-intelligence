@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 
 const DOCS = [
   {
@@ -162,19 +163,11 @@ export default function DocumentationPanel() {
 
   const activeDoc = DOCS.find((d) => d.id === activeTab);
 
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 rounded-md px-3 py-1.5 transition-colors"
-      >
-        Docs
-      </button>
-    );
-  }
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
 
-  return (
-    <div className="fixed inset-0 z-50 flex">
+  const panel = open && mounted ? createPortal(
+    <div className="fixed inset-0 flex" style={{ zIndex: 9999 }}>
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/60" onClick={() => setOpen(false)} />
 
@@ -224,6 +217,19 @@ export default function DocumentationPanel() {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 rounded-md px-3 py-1.5 transition-colors"
+      >
+        Docs
+      </button>
+      {panel}
+    </>
   );
 }

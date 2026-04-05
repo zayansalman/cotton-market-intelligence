@@ -122,32 +122,12 @@ export async function GET(req: Request) {
       }
     } catch { /* non-fatal — sentiment stays at 0 */ }
 
-    // Use walk-forward validation to select champion (more rigorous than single split)
-    const { compareModelsWalkForward } = await import("@/lib/models/walk-forward");
+    // Fast path: single train/test split for real-time prediction (<2s).
+    // Walk-forward is too heavy for serverless (400+ model trainings, >10s timeout).
+    // Walk-forward is available via include_backtest=true for analysis.
     const { MODEL_REGISTRY } = await import("@/lib/models/trainer");
-    const wfResults = compareModelsWalkForward(MODEL_REGISTRY, featureRows, {
-      min_train_size: 200,
-      step_size: 21,
-      horizon,
-    });
-
-    // Champion: best composite score (RMSE + direction accuracy)
-    const wfScore = (m: { metrics: { rmse: number; direction_accuracy: number } }) =>
-      -m.metrics.rmse + 0.5 * m.metrics.direction_accuracy;
-    const sortedWf = [...wfResults].sort((a, b) => wfScore(b) - wfScore(a));
-    const championWf = sortedWf[0];
-
-    // Now train the champion model on ALL data for final prediction
-    const trainResult = trainAndEvaluate(featureRows, horizon, 0.999); // train on nearly all data
-    const championFromTrain = trainResult.results.find((r) => r.model_id === championWf.model_id)
-      ?? trainResult.results[0];
-
-    const champion = {
-      ...championFromTrain,
-      // Use walk-forward metrics (honest) not train-set metrics
-      rmse: championWf.metrics.rmse,
-      direction_accuracy: championWf.metrics.direction_accuracy,
-    };
+    const trainResult = trainAndEvaluate(featureRows, horizon, 0.85);
+    const champion = trainResult.champion;
 
     // Get latest feature row for prediction
     const latestRow = featureRows[featureRows.length - 1];

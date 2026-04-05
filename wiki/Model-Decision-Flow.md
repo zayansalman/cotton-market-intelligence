@@ -6,7 +6,7 @@ This document explains the complete prediction and strategy pipeline: every data
 
 ## 1. Data Sources
 
-CMI ingests data from 15+ external sources across three provider categories.
+CMI ingests data from 21 external sources across three provider categories.
 
 ### Yahoo Finance (12 tickers, daily)
 
@@ -50,7 +50,7 @@ Headlines are processed through DistilRoBERTa (financial sentiment fine-tuned) t
 
 ## 2. Feature Engineering Pipeline
 
-Raw data from the sources above is transformed into 39 features across 8 groups. Every feature uses only past and current data -- no look-ahead bias.
+Raw data from the sources above is transformed into 48 features across 9 groups. Every feature uses only past and current data -- no look-ahead bias.
 
 ### Group 1: Lag Features (3 features)
 
@@ -173,7 +173,9 @@ Raw data from the sources above is transformed into 39 features across 8 groups.
 
 ## 3. Model Stack
 
-Six models, from trivially simple to moderately complex. The simple models exist to keep the complex ones honest.
+Eight models, from trivially simple to moderately complex. The simple models exist to keep the complex ones honest.
+
+**Note:** The live prediction route uses an LLM-first approach (Qwen 2.5 7B with full cross-market context). The 8 statistical models below are retained for backtesting, research, and walk-forward validation.
 
 ### Baseline Models (4)
 
@@ -184,12 +186,14 @@ Six models, from trivially simple to moderately complex. The simple models exist
 | **Moving average** | Predicts the n-day average will continue. | Captures simple trend-following. If this beats the naive, trends are tradable at the given horizon. |
 | **Seasonal naive** | Predicts this year's price = same calendar day last year. | Tests whether seasonality alone explains future returns. If seasonal beats naive, calendar effects are dominant. |
 
-### ML Models (2)
+### ML Models (4)
 
 | Model | What It Does | Why It Is Included |
 |---|---|---|
-| **Ridge regression** | L2-regularized linear regression on all 39 features. | Captures linear relationships between features and forward returns while handling multicollinearity. With 39 features drawn from overlapping factor groups (momentum and MA features share price data), multicollinearity is guaranteed. Ridge shrinks unstable coefficients toward zero without dropping features entirely. |
+| **Ridge regression** | L2-regularized linear regression on all 48 features. | Captures linear relationships between features and forward returns while handling multicollinearity. With 48 features drawn from overlapping factor groups (momentum and MA features share price data), multicollinearity is guaranteed. Ridge shrinks unstable coefficients toward zero without dropping features entirely. |
+| **Elastic net** | Combined L1+L2 regularized linear regression on all 48 features. | Combines Ridge's multicollinearity stability with Lasso's feature selection. In a 48-feature space with correlated groups, elastic net identifies the most informative features while keeping correlated predictors stable. |
 | **Gradient boosted stumps** | Gradient-boosted ensemble of depth-1 decision trees. | Captures non-linear interactions that ridge cannot -- for example, "high volatility AND low momentum" behaves differently from either condition alone. Depth-1 trees (stumps) are the minimum viable unit of non-linearity: enough to capture threshold effects without overfitting. Boosting ensembles hundreds of weak learners into a strong predictor. |
+| **Gradient boosted trees (depth 3)** | Gradient-boosted ensemble of depth-3 decision trees. | Captures higher-order conditional interactions that stumps miss -- for example, "high vol AND low momentum AND harvest season" is a three-way interaction that depth-1 trees cannot represent. Depth-3 provides complementary signal to stumps while remaining constrained enough to avoid overfitting at ~1000 samples. |
 
 ### Hugging Face AI Models (3, non-blocking)
 
@@ -247,7 +251,7 @@ The unified signal combines four independent information sources into a single d
 
 | Source | Weight | Rationale |
 |---|---|---|
-| **Model forecast** | 40% | Highest weight because it is the only source validated against real out-of-sample data via walk-forward. It processes 39 features across 8 groups and has proven it can beat the naive baseline. Data-rich, statistically tested. |
+| **Model forecast** | 40% | Highest weight because it is the only source validated against real out-of-sample data via walk-forward. It processes 48 features across 9 groups and has proven it can beat the naive baseline. Data-rich, statistically tested. |
 | **Benchmarks/heuristic** | 25% | Simple percentile rank and z-score logic. Cannot be catastrophically wrong because the rules are transparent and well-understood. Acts as a sanity check on the model. If the model says BUY but the heuristic says AVOID, confidence drops. |
 | **LLM analyst** | 20% | Has access to qualitative context that no statistical model can process: geopolitical events, trade policy changes, weather forecasts, USDA report interpretation. The signal is valuable but noisy and not validated against historical data. |
 | **Sentiment** | 15% | Weakest signal individually but adds information orthogonal to price. Sentiment captures what the market is thinking before it finishes acting. Low weight because NLP on short headlines is inherently noisy. |
@@ -404,7 +408,7 @@ This allows any user to trace the final BUY signal back through the ensemble to 
                               |
                               v
   +----------------------------------------------------------+
-  |              buildFeatures() -- 39 features                |
+  |              buildFeatures() -- 48 features                |
   |                                                            |
   |  [lag] [momentum] [volatility] [regime] [technical]        |
   |  [cross-market] [lagged cross-market] [calendar]           |
@@ -421,8 +425,10 @@ This allows any user to trace the final BUY signal back through the ensemble to 
   |   naive, mean,     |               |   -> sentiment     |
   |   MA, seasonal     |               |                    |
   |                    |               | Qwen 2.5 7B        |
-  | 2 ML models:       |               |   -> LLM forecast  |
-  |   ridge, GBM      |               |                    |
+  | 4 ML models:       |               |   -> LLM forecast  |
+  |   ridge, elastic   |               |                    |
+  |   net, GBM stumps, |               |                    |
+  |   GBM trees        |               |                    |
   |                    |               | Chronos T5         |
   | Walk-forward       |               |   -> time-series   |
   | validation         |               |      forecast      |
@@ -480,8 +486,7 @@ This allows any user to trace the final BUY signal back through the ensemble to 
 | Volatility | 3 | cotton_vol_10d, cotton_vol_21d, cotton_vol_63d |
 | Regime | 4 | vol_regime, trend_regime, pct_rank_63d, pct_rank_252d |
 | Technical | 4 | rsi_14, ma_cross_50_200, dist_from_52w_high, dist_from_52w_low |
-| Cross-market | 8 | cotton_dxy_ratio, cotton_oil_ratio, dxy_ret_21d, vix_level, oil_ret_21d, sp500_ret_21d, cotton_soybean_ratio, cotton_wheat_ratio |
-| Lagged cross-market | 6 | dxy_lag_5d, dxy_lag_21d, oil_lag_5d, oil_lag_21d, vix_lag_5d, soybean_ret_21d |
+| Cross-market | 19 | cotton_dxy_ratio, cotton_oil_ratio, dxy_ret_21d, vix_level, oil_ret_21d, sp500_ret_21d, cotton_soybean_ratio, cotton_wheat_ratio, fertilizer_level, diesel_level, container_freight_level, inr_usd_level, bdt_usd_level, cotton_fertilizer_ratio, cotton_diesel_ratio, polyester_spread, corn_ret_21d, wheat_ret_21d, soybean_ret_21d |
 | Calendar/seasonal | 5 | month, quarter, day_of_week, is_harvest_season, is_planting_season |
 | Sentiment | 1 | sentiment_score |
-| **Total** | **38** | + forward returns (fwd_return_5d/21d/63d) as targets |
+| **Total** | **48** | + forward returns (fwd_return_5d/21d/63d) as targets |

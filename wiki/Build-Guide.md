@@ -219,11 +219,11 @@ For the target (cotton price), add:
 
 ### Feature Count Guidance
 
-Aim for **~50 features** from **~21 sources**. Here is why:
+Aim for **48 features** from **21 sources**. Here is why:
 
 - With ~1000 trading days of daily data (4 years), you have roughly 1000 samples
 - The rule of thumb is 10-20 samples per feature for linear models
-- 50 features / 1000 samples = 1:20 ratio, which is on the edge
+- 48 features / 1000 samples = 1:21 ratio, which is on the edge
 - More than 100 features risks overfitting, especially with tree-based models
 - Regularization (Ridge) helps, but is not a substitute for feature discipline
 
@@ -251,7 +251,7 @@ If you cannot beat this, your model has no value. This is the honest null hypoth
 
 **5. Ridge regression:** Linear model with L2 regularization.
 
-Why Ridge over OLS: with 50 correlated features, OLS coefficients explode due to multicollinearity. Ridge shrinks them toward zero, producing stable predictions. Lambda = 0.01 is a good starting point; tune via walk-forward validation (not cross-validation).
+Why Ridge over OLS: with 48 correlated features, OLS coefficients explode due to multicollinearity. Ridge shrinks them toward zero, producing stable predictions. Lambda = 0.01 is a good starting point; tune via walk-forward validation (not cross-validation).
 
 Why Ridge over Lasso: Lasso (L1) performs feature selection, which sounds nice but is unstable when features are correlated -- it arbitrarily picks one from a correlated group. Ridge keeps all features with shrunken weights, which is more stable for forecasting.
 
@@ -259,7 +259,7 @@ Why Ridge over Lasso: Lasso (L1) performs feature selection, which sounds nice b
 
 Why stumps: at ~1000 samples, deeper trees WILL overfit. A stump captures "if DXY > 105, cotton tends to fall" without fitting noise. 50 rounds of stumps is enough to capture the main non-linear effects.
 
-Why not random forests: forests are good for classification with lots of samples. For regression with 1000 samples and 50 features, boosted stumps are more sample-efficient.
+Why not random forests: forests are good for classification with lots of samples. For regression with 1000 samples and 48 features, boosted stumps are more sample-efficient.
 
 ### Why NOT Neural Networks
 

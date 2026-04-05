@@ -11,21 +11,23 @@ As of V4, the prediction stack and strategy engine are no longer siloed. They fe
 ### End-to-End Flow
 
 ```
-  DATA SOURCES (15+)
+  DATA SOURCES (21)
   Yahoo Finance (12 tickers) + FRED (2 series) + RSS (7 feeds)
         |
         v
-  FEATURE ENGINEERING (39 features, 8 groups)
+  FEATURE ENGINEERING (48 features, 9 groups)
   lag, momentum, volatility, regime, technical,
   cross-market, lagged cross-market, calendar, sentiment
         |
         +---------------------+---------------------+
         |                     |                     |
         v                     v                     v
-  MODEL STACK (6 models)    HF AI MODELS          HEURISTIC
+  MODEL STACK (8 models)    HF AI MODELS          HEURISTIC
   naive, mean, MA,          DistilRoBERTa         percentile rank
-  seasonal, ridge, GBM      Qwen 2.5 7B          z-score
-  walk-forward validated    Chronos T5            vol regime
+  seasonal, ridge,          Qwen 2.5 7B          z-score
+  elastic net, boosted      Chronos T5            vol regime
+  stumps, boosted trees
+  walk-forward validated
         |                     |                     |
         v                     v                     v
   +-----------------------------------------------------------+
@@ -87,9 +89,9 @@ For the complete rationale behind every data source, feature group, model choice
   | Strategy       |  | Prediction    |  | Landed Cost    |
   | Engine         |  | Pipeline      |  | Calculator     |
   |                |  |               |  |                |
-  | Unified signal |  | 15 factors    |  | Futures +      |
-  | (4 sources,    |  | 39 features   |  | basis + freight|
-  |  weighted      |  | 6 models      |  | + FX + duty    |
+  | Unified signal |  | 21 sources    |  | Futures +      |
+  | (4 sources,    |  | 48 features   |  | basis + freight|
+  |  weighted      |  | 8 models      |  | + FX + duty    |
   |  ensemble)     |  | + HF AI       |  |                |
   +----------------+  +---------------+  +----------------+
            |                  |                  |
@@ -288,8 +290,10 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
 
 ## 5. V3 Prediction Pipeline
 
+**Live prediction architecture:** The production prediction route uses an LLM-first approach -- Qwen 2.5 7B with full cross-market context generates the live forecast. The 8 statistical models below are retained in the codebase for backtesting, research, and walk-forward validation, but the live `/api/prediction` endpoint delegates to the LLM.
+
 ```
-                        DATA SOURCES (15 factors)
+                        DATA SOURCES (21 sources)
   +----------+  +----------+  +--------+  +--------+  +--------+
   | Cotton   |  | DXY      |  | VIX    |  | Crude  |  | NatGas |
   | CT=F     |  | DX-Y.NYB |  | ^VIX   |  | CL=F   |  | NG=F   |
@@ -321,7 +325,7 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
                               |
                               v
   +----------------------------------------------------------+
-  |              buildFeatures() -- 39 features               |
+  |              buildFeatures() -- 48 features               |
   |                                                          |
   |  Lag group:    cotton_lag_5d, cotton_lag_21d, ...         |
   |  Momentum:     cotton_ret_5d, cotton_ret_21d, ...        |
@@ -339,12 +343,14 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
                               |
                               v
   +----------------------------------------------------------+
-  |              trainAndEvaluate() -- 6 models               |
+  |              trainAndEvaluate() -- 8 models               |
   |                                                          |
   |  Baselines:  naive, historical_mean, moving_avg,         |
   |              seasonal_naive                               |
   |  ML models:  ridge_regression (L2-regularized OLS),      |
-  |              boosted_stumps (gradient boosted trees)      |
+  |              elastic_net (L1+L2),                         |
+  |              boosted_stumps (depth-1 trees),              |
+  |              boosted_trees (depth-3 trees)                |
   |                                                          |
   |  Train/test split (85/15), evaluate MAE + RMSE +         |
   |  direction accuracy. Champion = lowest RMSE that          |

@@ -119,7 +119,42 @@ export async function hfChatCompletion(
     }
   }
 
-  console.error(`[hf-client] All providers exhausted for ${model}`);
+  // Fallback: try OpenAI if configured (many quant firms use multiple LLM vendors)
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) {
+    try {
+      const openaiModel = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+      console.info(`[hf-client] All HF providers exhausted, falling back to OpenAI ${openaiModel}`);
+      const res = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        timeout: 30_000,
+        headers: {
+          Authorization: `Bearer ${openaiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: openaiModel,
+          messages: options.messages,
+          max_tokens: options.max_tokens ?? 800,
+          temperature: options.temperature ?? 0.2,
+          ...(options.response_format ? { response_format: options.response_format } : {}),
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const content = data?.choices?.[0]?.message?.content?.trim();
+        if (content) {
+          console.info(`[hf-client] OpenAI fallback succeeded`);
+          return content;
+        }
+      }
+    } catch (e) {
+      console.warn("[hf-client] OpenAI fallback failed:", e);
+    }
+  }
+
+  console.error(`[hf-client] All providers exhausted for ${model} (including OpenAI fallback)`);
   return null;
 }
 

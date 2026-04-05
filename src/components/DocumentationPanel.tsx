@@ -32,33 +32,47 @@ Weighted combination with confidence from source agreement. When all 4 sources a
   {
     id: "data",
     title: "Data Sources",
-    content: `## 15 Data Sources
+    content: `## 21 Data Sources (Institutional Grade)
 
-### Market Prices (Yahoo Finance)
+### Market Prices (Yahoo Finance — 12 tickers)
 - **Cotton #2 (CT=F)** — Target variable, ICE benchmark
 - **DXY** — USD index, inverse correlation (R ~ -0.3 to -0.6)
-- **WTI Crude Oil (CL=F)** — Polyester substitution chain
+- **WTI Crude Oil (CL=F)** — Polyester substitution chain (oil→naphtha→PX→PTA→PET→polyester)
 - **Natural Gas (NG=F)** — Polyester energy cost proxy
 - **VIX** — Risk-off/risk-on proxy
 - **US 10Y Treasury** — Carry cost, monetary policy signal
-- **CNY/USD** — China demand exposure (30% of global cotton)
-- **Baltic Dry Index** — Freight cost proxy
+- **CNY/USD** — China demand (30% of global cotton consumption)
 - **S&P 500** — Growth/risk appetite proxy
-- **Soybean (ZS=F)** — Acreage competition (strongest cross-commodity signal)
+- **Soybean (ZS=F)** — Acreage competition (strongest structural cross-commodity signal)
 - **Wheat (ZW=F)** — Acreage competition, ag cycle proxy
 - **Corn (ZC=F)** — Acreage switching, ag complex barometer
+
+### Input Costs (farmer economics → planting decisions)
+- **Mosaic Co (MOS)** — DAP fertilizer cost proxy. Cotton is nitrogen/phosphorus-hungry. Fertilizer up → breakeven up → less acreage.
+- **ULSD Diesel (HO=F)** — Farm machinery, ginning, transport costs. Directly affects farmer operating margin.
+
+### Freight (cotton logistics)
+- **Baltic Dry Index (^BDI)** — Bulk shipping proxy
+- **ZIM Shipping (ZIM)** — Container freight proxy. Cotton moves in containers, not bulk.
+
+### FX (producing + consuming countries)
+- **INR/USD** — India (25% of global production AND consumption)
+- **BDT/USD** — Bangladesh (largest raw cotton importer, our primary market)
 
 ### Macro (FRED)
 - **5Y Breakeven Inflation** — Inflation hedge signal
 - **China Manufacturing PMI** — End-use demand indicator
 
 ### News (7 RSS Feeds)
-CottonGrower, TextileWorld, USDA, World Bank, Reuters Commodities, ICAC, Fibre2Fashion`,
+CottonGrower, TextileWorld, USDA, World Bank, Reuters Commodities, ICAC, Fibre2Fashion
+
+### Sentiment (HF AI)
+- **DistilRoBERTa** financial sentiment on all headlines → aggregate score`,
   },
   {
     id: "features",
     title: "41 Features",
-    content: `## Feature Engineering (41 Features, 8 Groups)
+    content: `## Feature Engineering (50 Features, 9 Groups)
 
 ### Lag (3): cotton_lag_5d, 21d, 63d
 Autocorrelation in price series. Cotton shows mean-reversion at weekly scale, momentum at monthly.
@@ -75,8 +89,10 @@ Market state conditioning. Models need to know "what kind of market is this?"
 ### Technical (4): RSI-14, MA cross (50-200), distance from 52w high/low
 Standard TA signals. RSI-14 captures overbought/oversold. MA cross = trend confirmation.
 
-### Cross-Market (11): DXY/oil/VIX levels + lagged 5d/21d, ratios, soybean/wheat/corn
-**Lagged features are key**: DXY at t-5 predicts cotton at t better than DXY at t. Currency repricing takes 3-7 days to flow through commodity markets.
+### Cross-Market (19): DXY/oil/VIX levels + lagged 5d/21d, ratios, soybean/wheat/corn, fertilizer, diesel, container freight, INR/BDT FX, polyester spread
+**Lagged features are key**: DXY at t-5 predicts cotton at t better than DXY at t. Currency repricing takes 3-7 days.
+**Input cost ratios**: cotton/fertilizer and cotton/diesel capture farmer profitability — when input costs rise faster than cotton price, acreage contracts.
+**Polyester spread**: cotton price minus polyester cost proxy — the actual substitution signal mills use.
 
 ### Calendar (5): month, quarter, DOW, harvest flag, planting flag
 Cotton has strong seasonality: US planting Mar-May, harvest Oct-Dec.

@@ -421,5 +421,144 @@ export function buildFactorFetchers(): FactorFetcher[] {
       },
       fetch: () => fetchYahoo("ZC=F", 5),
     },
+
+    // ================================================================
+    // INPUT COSTS: FERTILIZER (DAP PROXY VIA MOSAIC)
+    // Cotton is nitrogen- and phosphorus-hungry. Fertilizer costs
+    // directly affect farmer planting economics: fertilizer up →
+    // breakeven cost up → marginal farmers exit → less acreage →
+    // cotton supply down → price up. Mosaic (MOS) is the largest
+    // US phosphate/potash producer — stock price proxies DAP/MAP
+    // fertilizer prices. A top cotton desk tracks DAP spot prices;
+    // MOS is the best freely available daily proxy.
+    // ================================================================
+    {
+      meta: {
+        id: "fertilizer_proxy",
+        name: "Mosaic Co (fertilizer cost proxy)",
+        group: "supply",
+        frequency: "daily",
+        release_lag_days: 0,
+        unit: "$/share",
+        source: "Yahoo Finance (MOS)",
+        direction: 1,
+      },
+      fetch: () => fetchYahoo("MOS", 5),
+    },
+
+    // ================================================================
+    // INPUT COSTS: DIESEL (FARM MACHINERY + GINNING + TRANSPORT)
+    // Diesel powers tractors, cotton pickers, gins, and trucks
+    // from field to port. Diesel up → farm operating cost up →
+    // breakeven up → same acreage mechanism as fertilizer.
+    // Also: diesel drives inland logistics cost for cotton delivery.
+    // ULSD (ultra-low sulfur diesel) futures are the benchmark.
+    // ================================================================
+    {
+      meta: {
+        id: "diesel",
+        name: "ULSD Diesel Futures",
+        group: "supply",
+        frequency: "daily",
+        release_lag_days: 0,
+        unit: "$/gallon",
+        source: "Yahoo Finance (HO=F)",
+        direction: 1,
+      },
+      fetch: () => fetchYahoo("HO=F", 5),
+    },
+
+    // ================================================================
+    // FREIGHT: CONTAINER SHIPPING (COTTON MOVES IN CONTAINERS)
+    // Cotton bales are containerized, not bulk. BDI captures bulk
+    // shipping but container rates can diverge significantly.
+    // ZIM Integrated Shipping stock price is a liquid daily proxy
+    // for container freight rates — when ZIM is up, container
+    // rates are up → CIF cotton cost rises → positive correlation.
+    // A real desk would use Drewry/Freightos indices; ZIM is the
+    // best freely available daily proxy.
+    // ================================================================
+    {
+      meta: {
+        id: "container_freight",
+        name: "ZIM Shipping (container freight proxy)",
+        group: "freight",
+        frequency: "daily",
+        release_lag_days: 0,
+        unit: "$/share",
+        source: "Yahoo Finance (ZIM)",
+        direction: 1,
+      },
+      fetch: () => fetchYahoo("ZIM", 3),
+    },
+
+    // ================================================================
+    // WEATHER: EL NINO / LA NINA (ENSO INDEX)
+    // The single most important weather signal for global cotton.
+    // El Nino → India drought risk → Indian cotton production down
+    // → global supply tightness → price up. La Nina → excess rain
+    // → flooding in US Southeast → quality damage → price up.
+    // ENSO has 6-12 month lead time on cotton production outcomes.
+    // FRED doesn't carry ONI directly but we can proxy via
+    // sea surface temperature anomalies or use a placeholder.
+    // ================================================================
+    {
+      meta: {
+        id: "enso_proxy",
+        name: "ENSO Weather Index (placeholder)",
+        group: "supply",
+        frequency: "monthly",
+        release_lag_days: 30,
+        unit: "index",
+        source: "NOAA (manual/future integration)",
+        direction: 1,
+      },
+      // NOAA ONI not on a free API — placeholder for future integration
+      fetch: async () => [],
+    },
+
+    // ================================================================
+    // DEMAND: INR/USD (INDIA DEMAND + COMPETITIVENESS)
+    // India is both a major producer AND consumer. INR weakness →
+    // Indian cotton cheaper for export → more competitive globally
+    // → can push prices down. But also: INR weakness → Indian
+    // mills face higher import costs for other inputs → complex.
+    // Net effect tracked empirically. India is ~25% of global
+    // cotton production and consumption.
+    // ================================================================
+    {
+      meta: {
+        id: "inr_usd",
+        name: "INR/USD Exchange Rate",
+        group: "macro",
+        frequency: "daily",
+        release_lag_days: 0,
+        unit: "INR per USD",
+        source: "Yahoo Finance (INR=X)",
+        direction: -1,
+      },
+      fetch: () => fetchYahoo("INR=X", 5),
+    },
+
+    // ================================================================
+    // DEMAND: BDT/USD (BANGLADESH — LARGEST RAW COTTON IMPORTER)
+    // Bangladesh imports ~8M bales/year (100% of consumption).
+    // BDT weakness → cotton more expensive for BD mills →
+    // procurement pacing changes → demand impact on global prices.
+    // Critical for our primary user base.
+    // ================================================================
+    {
+      meta: {
+        id: "bdt_usd",
+        name: "BDT/USD Exchange Rate",
+        group: "macro",
+        frequency: "daily",
+        release_lag_days: 0,
+        unit: "BDT per USD",
+        source: "Yahoo Finance (BDT=X)",
+        direction: -1,
+      },
+      fetch: () => fetchYahoo("BDT=X", 5),
+    },
   ];
 }

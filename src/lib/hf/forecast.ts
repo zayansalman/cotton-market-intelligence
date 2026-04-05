@@ -141,7 +141,7 @@ export async function chronosForecast(
 
   try {
     const res = await fetchWithTimeout(
-      "https://api-inference.huggingface.co/models/amazon/chronos-t5-small",
+      "https://router.huggingface.co/hf-inference/models/amazon/chronos-t5-small",
       {
         method: "POST",
         timeout: 30_000,

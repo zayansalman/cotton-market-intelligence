@@ -2,7 +2,7 @@
 
 ## Factor Registry
 
-~50 features engineered from 21 sources.
+48 features engineered from 21 sources.
 
 | ID | Name | Group | Freq | Lag | Unit | Source | Dir | Economic Mechanism |
 |---|---|---|---|---|---|---|---|---|

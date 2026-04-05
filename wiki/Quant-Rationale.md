@@ -162,7 +162,7 @@ The null hypothesis. When no directional signal is present, the optimal strategy
 
 ## 5. V3 Feature Engineering
 
-The V3 prediction stack constructs 30 features across 7 groups from daily aligned data. The groupings reflect the causal structure of cotton price formation.
+The V3 prediction stack constructs 48 features across 9 groups from daily aligned data. The groupings reflect the causal structure of cotton price formation.
 
 ### Feature Groups and Their Rationale
 
@@ -173,8 +173,9 @@ The V3 prediction stack constructs 30 features across 7 groups from daily aligne
 | Volatility | 3 | Regime conditioning -- models behave differently under different vol |
 | Regime | 4 | Categorical state variables for conditional prediction |
 | Technical | 4 | Market microstructure signals (RSI, MA cross, distance from extremes) |
-| Cross-market | 6 | Macro and intermarket dependencies |
+| Cross-market | 19 | Macro, intermarket, input cost, FX, freight, and substitution dependencies |
 | Calendar | 5 | Seasonality in planting, growing, harvest cycles |
+| Sentiment | 1 | NLP-derived market mood from financial news headlines |
 
 ### Lag Features (5d, 21d, 63d)
 
@@ -240,11 +241,23 @@ If a machine learning model cannot beat "predict zero return" on out-of-sample d
 
 ### Gradient Boosted Stumps
 
-**Why single-split stumps instead of deep trees.** A decision stump makes exactly one split: "if feature_j <= threshold, predict A; else predict B." Deep trees (depth 3+) capture higher-order feature interactions but are prone to overfitting on the small, noisy datasets typical of financial time series. With ~800-1000 training samples and 30 features, a deep tree ensemble would memorize noise. Single-split stumps are high-bias, low-variance learners. Gradient boosting accumulates many weak learners, each explaining a small piece of residual signal. This is the classic bias-variance trade-off: prefer low variance when signal-to-noise is low.
+**Why single-split stumps instead of deep trees.** A decision stump makes exactly one split: "if feature_j <= threshold, predict A; else predict B." Deep trees (depth 3+) capture higher-order feature interactions but are prone to overfitting on the small, noisy datasets typical of financial time series. With ~800-1000 training samples and 48 features, a deep tree ensemble would memorize noise. Single-split stumps are high-bias, low-variance learners. Gradient boosting accumulates many weak learners, each explaining a small piece of residual signal. This is the classic bias-variance trade-off: prefer low variance when signal-to-noise is low.
 
 **Why 50 rounds.** Each boosting round adds one stump. With a learning rate of 0.1, the effective contribution of each stump is dampened: `prediction += 0.1 * stump_prediction`. After 50 rounds, the cumulative contribution is at most 50 * 0.1 = 5 units of stump output. Empirically, train loss stops improving meaningfully after ~40-60 rounds on this dataset. 50 rounds balances training time (O(n * p * 20 quantiles * 50 rounds), feasible in <1 second for n ~ 1000) with model expressiveness.
 
 **Why learning rate = 0.1.** A lower learning rate (0.01) would require more rounds to converge (500+), increasing latency. A higher rate (0.3+) would cause individual stumps to overfit to residuals, making the ensemble less stable. The value 0.1 is a well-established default in the gradient boosting literature (Friedman 2001) and works well for financial datasets with moderate sample sizes.
+
+### Elastic Net (L1+L2 Regularization)
+
+**Why add elastic net alongside Ridge.** Elastic net combines L1 (Lasso) and L2 (Ridge) penalties. In a 48-feature space with correlated groups, pure L2 keeps all features but may spread weight too thinly. Pure L1 is unstable with correlated features. Elastic net provides the best of both: L1 drives truly uninformative features to zero (effective feature selection), while L2 stabilizes the coefficients among correlated survivors. This is particularly valuable when the feature space has grown from the original design, as some features may be redundant.
+
+**Mixing parameter.** The L1/L2 ratio is set to favor L2 (alpha ~ 0.1-0.3 on the L1 side), keeping the model closer to Ridge behavior while allowing mild sparsity. This was tuned via walk-forward validation.
+
+### Gradient Boosted Trees (Depth 3)
+
+**Why add deeper trees alongside stumps.** Stumps capture single-variable threshold effects. Depth-3 trees capture three-way conditional interactions -- for example, "high vol AND low momentum AND harvest season" -- that stumps cannot represent without many more rounds. With 48 features and ~1000 samples, depth-3 is the practical ceiling: depth-4+ trees would have too many leaf nodes relative to sample size.
+
+**Complementary signal.** Stumps and depth-3 trees are deliberately both included because they capture different signal types. The champion selection process (composite score on walk-forward RMSE + directional accuracy) determines which contributes to the ensemble. In practice, stumps tend to win at shorter horizons (5d) while depth-3 trees perform better at longer horizons (63d) where multi-factor conditioning matters more.
 
 ### Why NOT Neural Networks / LSTM / Transformers
 
@@ -252,7 +265,7 @@ Three reasons, in order of importance:
 
 1. **Runtime environment.** The system is a stateless Next.js API running on Vercel. There is no Python runtime, no GPU, and no persistent model state. Neural network inference requires either a hosted model API (latency, cost, dependency) or WebAssembly/ONNX inference (complex, still slow for LSTMs). Ridge regression and boosted stumps fit and predict in <100ms in pure TypeScript.
 
-2. **Sample size.** With ~1000-1250 daily observations and 30 features, we are firmly in the "small data" regime where deep learning has no advantage over properly regularized linear models and shallow ensembles. The universal approximation theorem is irrelevant when you do not have enough data to estimate the parameters.
+2. **Sample size.** With ~1000-1250 daily observations and 48 features, we are firmly in the "small data" regime where deep learning has no advantage over properly regularized linear models and shallow ensembles. The universal approximation theorem is irrelevant when you do not have enough data to estimate the parameters.
 
 3. **Interpretability.** Ridge coefficients directly indicate which features drive the forecast and by how much. Stump feature splits are similarly interpretable. A procurement manager needs to understand *why* the model says "buy" -- a black-box neural network prediction would not be trusted or acted upon.
 
@@ -282,7 +295,7 @@ The backtest re-trains the model every 21 trading days (~1 calendar month). This
 
 ### Minimum Training Size (200 Days)
 
-Approximately one calendar year of trading data. This ensures the model has seen at least one seasonal cycle before making its first prediction. With 30 features and ~200 observations, Ridge regression has roughly a 6:1 observation-to-feature ratio, which is tight but adequate given L2 regularization.
+Approximately one calendar year of trading data. This ensures the model has seen at least one seasonal cycle before making its first prediction. With 48 features and ~200 observations, Ridge regression has roughly a 6:1 observation-to-feature ratio, which is tight but adequate given L2 regularization.
 
 ### Metrics Suite
 

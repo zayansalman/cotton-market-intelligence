@@ -1,6 +1,6 @@
 # Cotton Market Intelligence (CMI)
 
-A production cotton procurement intelligence platform that helps Bangladesh spinning mills decide **when** and **how much** cotton to buy. The system pulls Cotton #2 futures data, computes statistical benchmarks, runs a 6-model price prediction stack with walk-forward backtesting, combines all signals into a unified weighted ensemble, and generates AI-powered procurement strategies with full decision transparency -- all deployed as a stateless Next.js application on Vercel.
+A production cotton procurement intelligence platform that helps Bangladesh spinning mills decide **when** and **how much** cotton to buy. The system pulls Cotton #2 futures data from 21 sources, computes statistical benchmarks, runs LLM-first price prediction (Qwen 2.5 7B with full cross-market context), maintains an 8-model statistical stack for backtesting/research, combines all signals into a unified weighted ensemble, and generates AI-powered procurement strategies with full decision transparency -- all deployed as a stateless Next.js application on Vercel.
 
 **Live:** [cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app) | **Dev:** [cmi-notebooks-dev.vercel.app](https://cmi-notebooks-dev.vercel.app)
 
@@ -39,9 +39,9 @@ CMI answers three questions for a cotton procurement desk:
 |---|---|
 | **Price Intelligence** | Cotton #2 futures from Yahoo Finance. 1Y/5Y percentile rank, z-score, 30d/90d annualized volatility, 50d/200d MA, momentum. |
 | **Unified Decision Pipeline** | Four-source weighted ensemble (model 40%, heuristic 25%, LLM 20%, sentiment 15%) with full decision driver transparency. Every recommendation traces back to raw data. |
-| **Strategy Engine** | AI-generated procurement strategy via Hugging Face (Qwen 2.5 7B) with OpenAI fallback and deterministic heuristic baseline. Always produces a result. |
+| **Strategy Engine** | AI-generated procurement strategy via Hugging Face (Qwen 2.5 7B) with deterministic heuristic baseline. Always produces a result. |
 | **Landed Cost Calculator** | Futures price to BDT/kg with basis, freight, insurance, duty, FX conversion, and wastage adjustment. Origin-specific presets. |
-| **Price Prediction (V3)** | 15-factor data pipeline, 39-feature engineering library, 6-model stack, walk-forward backtesting, accuracy scorecard, 5d/21d/63d forecasts with 95% CI. |
+| **Price Prediction (V3)** | 21-source data pipeline, 48-feature engineering library, 8-model stack, walk-forward backtesting, accuracy scorecard, 5d/21d/63d forecasts with 95% CI. Live prediction uses LLM-first approach (Qwen 2.5 7B with full cross-market context); statistical models retained for backtesting/research. |
 | **HF AI Integration** | Financial sentiment analysis (DistilRoBERTa), LLM quant analyst forecast (Qwen 2.5 7B), Chronos T5 time-series forecasting. |
 | **Multi-Mill Portfolio** | Multiple mill configurations with aggregate portfolio views. |
 | **Alert System** | Signal change, volatility breach, key level break, price threshold alerts via webhook/email. |
@@ -52,7 +52,7 @@ CMI answers three questions for a cotton procurement desk:
 ## Architecture
 
 ```
-                       DATA SOURCES (15+)
+                       DATA SOURCES (21)
   +------------------+  +----------------+  +------------------+
   | Yahoo Finance    |  | FRED           |  | RSS Feeds (7)    |
   | 12 tickers       |  | T5YIE          |  | cottongrower     |
@@ -65,16 +65,18 @@ CMI answers three questions for a cotton procurement desk:
            |                    |                     |
            v                    v                     v
   +----------------------------------------------------------+
-  |          PIPELINE: fetch -> align -> features (39)        |
+  |          PIPELINE: fetch -> align -> features (48)        |
   +---------------------------+------------------------------+
                               |
            +------------------+------------------+
            |                  |                  |
            v                  v                  v
-  MODEL STACK (6)        HF AI MODELS        HEURISTIC
+  MODEL STACK (8)        HF AI MODELS        HEURISTIC
   naive, mean, MA,       DistilRoBERTa       pct_rank, z_score
   seasonal, ridge,       Qwen 2.5 7B         vol regime
-  boosted stumps         Chronos T5
+  elastic net,           Chronos T5
+  boosted stumps,
+  boosted trees
            |                  |                  |
            v                  v                  v
   +----------------------------------------------------------+
@@ -132,7 +134,7 @@ Every statistical choice has a reason. This section explains the "why" behind ea
 
 | Source | Weight | Rationale |
 |---|---|---|
-| **Model forecast** | 40% | Walk-forward validated against real out-of-sample data. Processes 39 features. Earns the highest weight through demonstrated performance. |
+| **Model forecast** | 40% | Walk-forward validated against real out-of-sample data. Processes 48 features. Earns the highest weight through demonstrated performance. |
 | **Heuristic** | 25% | Simple, robust, never catastrophically wrong. Acts as a sanity check on complex models. |
 | **LLM analyst** | 20% | Qualitative context (geopolitics, weather, policy) that no statistical model can process. Valuable but noisy and not historically validated. |
 | **Sentiment** | 15% | Orthogonal to price data. Captures pre-price-move information from news. Low weight because NLP on short headlines is inherently noisy. |
@@ -141,11 +143,13 @@ Every statistical choice has a reason. This section explains the "why" behind ea
 
 | Decision | Rationale |
 |---|---|
-| **Ridge regression over OLS** | L2 regularization prevents coefficient explosion on correlated features. With 39 features drawn from overlapping factor groups (e.g., momentum and MA features share price data), multicollinearity is guaranteed. Ridge shrinks unstable coefficients toward zero without dropping features entirely. |
+| **Ridge regression over OLS** | L2 regularization prevents coefficient explosion on correlated features. With 48 features drawn from overlapping factor groups (e.g., momentum and MA features share price data), multicollinearity is guaranteed. Ridge shrinks unstable coefficients toward zero without dropping features entirely. |
+| **Elastic net (L1+L2)** | Combines Ridge and Lasso penalties. In a 48-feature space with correlated groups, elastic net provides feature selection (L1) with multicollinearity stability (L2). |
 | **Gradient boosted stumps** | Depth-1 trees (stumps) capture non-linear feature interactions -- e.g., "high volatility AND low momentum" -- without the overfitting risk of deep trees. Boosting ensembles hundreds of weak learners into a strong predictor. Stumps are the minimum viable unit of non-linearity. |
+| **Gradient boosted trees (depth 3)** | Deeper trees capture higher-order feature interactions that stumps miss. Depth-3 trees can model conditional relationships like "high vol AND low momentum AND harvest season." Provides complementary signal to stumps. |
 | **Walk-forward validation** | Expanding window, never k-fold. K-fold on time series is invalid because it allows future data to inform past predictions. Walk-forward respects temporal ordering: train on [0, t], predict [t+1, t+n], expand window, repeat. |
 | **Release-lag alignment** | Economic indicators (CPI, industrial production, USDA reports) are published with a lag. The pipeline forward-fills each factor with a configurable offset matching its real-world publication delay. This eliminates look-ahead bias -- the most common and most damaging error in backtesting. |
-| **39 features across 8 groups** | Lag, momentum, volatility, regime, technical, cross-market, lagged cross-market, calendar, sentiment. Breadth across uncorrelated factor groups reduces model fragility. No single factor group dominates, so the model degrades gracefully when any one data source fails. |
+| **48 features across 9 groups** | Lag, momentum, volatility, regime, technical, cross-market, lagged cross-market, calendar, sentiment. Breadth across uncorrelated factor groups reduces model fragility. No single factor group dominates, so the model degrades gracefully when any one data source fails. |
 
 ---
 
@@ -174,17 +178,18 @@ For the complete rationale behind every data source, feature, model, and weight,
 The prediction system follows an 8-stage pipeline from raw data to chart overlay.
 
 ```
-  [1] Data Sources        15 factors from Yahoo Finance + FRED
+  [1] Data Sources        21 sources: Yahoo Finance + FRED + RSS + HF AI
           |
   [2] Release-Lag         Forward-fill with configurable publication offset
       Alignment
           |
-  [3] Feature             39 features: lag, momentum, vol, regime,
+  [3] Feature             48 features: lag, momentum, vol, regime,
       Engineering         technical, cross-market, lagged cross-market,
                           calendar, sentiment
           |
-  [4] Model Training      6 models: naive, mean, MA, seasonal,
-                          ridge regression, gradient boosted stumps
+  [4] Model Training      8 models: naive, mean, MA, seasonal,
+                          ridge, elastic net, boosted stumps,
+                          boosted trees (depth 3)
           |
   [5] Walk-Forward        Expanding window, 21-day step, regime slicing,
       Backtesting         no look-ahead bias
@@ -206,8 +211,10 @@ The prediction system follows an 8-stage pipeline from raw data to chart overlay
 | Historical mean | Baseline -- tests whether recent price is informative | O(1) |
 | Moving average | Captures trend following | O(n) |
 | Seasonal decomposition | Captures calendar effects in cotton markets | O(n) |
-| Ridge regression | Linear model with L2 regularization on 39 features | O(n*p) |
-| Gradient boosted stumps | Non-linear ensemble capturing feature interactions | O(n*p*T) |
+| Ridge regression | Linear model with L2 regularization on 48 features | O(n*p) |
+| Elastic net | L1+L2 regularization for feature selection + stability | O(n*p) |
+| Gradient boosted stumps | Non-linear ensemble capturing feature interactions (depth 1) | O(n*p*T) |
+| Gradient boosted trees | Higher-order interactions via depth-3 trees | O(n*p*T) |
 
 Models are evaluated on expanding-window out-of-sample RMSE and directional accuracy. The accuracy scorecard applies traffic-light ratings and enforces go/no-go criteria before any forecast reaches the UI or the unified ensemble.
 
@@ -260,9 +267,9 @@ CMI is not a generic commodity tool. It encodes domain knowledge specific to Ban
 | React components | 20 |
 | Custom hooks | 6 |
 | API routes | 7 |
-| Prediction features | 39 (across 8 groups) |
-| Prediction models | 6 |
-| Data pipeline factors | 15 |
+| Prediction features | 48 (across 9 groups) |
+| Prediction models | 8 |
+| Data sources | 21 |
 | Ensemble sources | 4 (model, heuristic, LLM, sentiment) |
 | RSS feeds | 7 |
 | Security layers | 7 |
@@ -377,7 +384,7 @@ Production deployments should use GitHub Environment protection rules with requi
 | [Bangladesh Market](wiki/Bangladesh-Market.md) | Bangladesh cotton import context |
 | [Business Case](wiki/Business-Case.md) | Commercial rationale and ROI |
 | [Business Model](wiki/Business-Model.md) | Monetization and go-to-market |
-| [V3 Data Dictionary](wiki/V3-Data-Dictionary.md) | All 15 factors, 39 features, definitions |
+| [V3 Data Dictionary](wiki/V3-Data-Dictionary.md) | All 21 sources, 48 features, definitions |
 | [V3 Predictor Universe](wiki/V3-Predictor-Universe.md) | Factor selection rationale |
 | [Price Prediction Roadmap](wiki/Price-Prediction-Roadmap.md) | V3 issue tracker and delivery sequence |
 | [V2 Worked Scenarios](wiki/V2-Worked-Scenarios.md) | End-to-end procurement examples |

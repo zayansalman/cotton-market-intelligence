@@ -32,11 +32,11 @@ Every significant engineering trade-off in Cotton Market Intelligence, with rati
 
 **Decision**: Ridge regression and gradient boosted decision stumps implemented in pure TypeScript with no external dependencies.
 
-**Why**: The entire application is one language. Models deploy as part of the same Vercel serverless function -- no Python microservice, no Docker container, no model serialization format, no gRPC boundary. Training runs in <500ms on the feature matrix (approximately 1200 rows, 30 features, 6 models). The normal equations for ridge regression are analytically solvable for small feature sets.
+**Why**: The entire application is one language. Models deploy as part of the same Vercel serverless function -- no Python microservice, no Docker container, no model serialization format, no gRPC boundary. Training runs in <500ms on the feature matrix (approximately 1200 rows, 48 features, 8 models). The normal equations for ridge regression are analytically solvable for small feature sets.
 
 **Alternatives considered**: Python scikit-learn behind a FastAPI endpoint (rejected: adds a second language, a second deploy, network latency on every prediction), ONNX Runtime in Node.js (rejected: dependency weight, limited TypeScript types), TensorFlow.js (rejected: overkill for linear models and shallow trees).
 
-**Trade-offs**: No access to the scikit-learn/PyTorch ecosystem. Models are deliberately simple -- ridge regression and single-split boosted stumps. No XGBoost, no neural networks, no hyperparameter search. Counter-argument: for this use case (daily commodity price direction with 30 engineered features), simple models with proper walk-forward validation outperform complex models that overfit. The bottleneck is feature quality and data volume, not model complexity.
+**Trade-offs**: No access to the scikit-learn/PyTorch ecosystem. Models are deliberately simple -- ridge regression and single-split boosted stumps. No XGBoost, no neural networks, no hyperparameter search. Counter-argument: for this use case (daily commodity price direction with 48 engineered features), simple models with proper walk-forward validation outperform complex models that overfit. The bottleneck is feature quality and data volume, not model complexity.
 
 ---
 

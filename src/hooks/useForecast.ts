@@ -30,9 +30,19 @@ interface PredictionResponse {
   top_drivers: { feature: string; importance: number }[];
   hf_forecasts?: HFForecast[];
   sentiment?: { label: string; aggregate_score: number; n_headlines: number } | null;
+  methodology?: Record<string, MethodologySignal> | null;
+  reasoning?: string;
+  risk?: string;
+  confidence?: number;
 }
 
 /** Forecast attribution — what drove the prediction and how much. */
+export interface MethodologySignal {
+  signal: string;
+  observation: string;
+  weight: string;
+}
+
 export interface ForecastAttribution {
   sources: {
     name: string;
@@ -43,6 +53,9 @@ export interface ForecastAttribution {
   model_name: string;
   model_accuracy: string;
   top_features: string[];
+  methodology: Record<string, MethodologySignal> | null;
+  reasoning: string;
+  risk: string;
 }
 
 function futureDates(startDate: string, count: number): string[] {
@@ -165,8 +178,11 @@ export function useForecast() {
       setAttribution({
         sources,
         model_name: data.model.name,
-        model_accuracy: `RMSE: ${((data.model.test_rmse || 0.05) * 100).toFixed(2)}%, Direction: ${(data.model.direction_accuracy * 100).toFixed(0)}%`,
+        model_accuracy: `Confidence: ${data.confidence ?? "?"}%`,
         top_features: (data.top_drivers ?? []).slice(0, 6).map((d) => d.feature.replace(/_/g, " ")),
+        methodology: data.methodology ?? null,
+        reasoning: data.reasoning ?? "",
+        risk: data.risk ?? "",
       });
 
       // Fetch strategy backtest for chart overlay (lightweight, no model walk-forward)

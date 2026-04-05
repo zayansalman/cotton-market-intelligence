@@ -16,7 +16,7 @@ Bangladesh spinning mills need to decide WHEN and HOW MUCH cotton to buy. Buy to
 CMI combines four intelligence sources into a unified procurement signal:
 
 **1. Quantitative Model (40% weight)**
-Walk-forward validated prediction model trained on 41 features across 8 groups. Uses gradient boosted stumps for non-linear pattern capture. Evaluated with expanding-window backtesting — no future data leakage.
+Walk-forward validated prediction model trained on 48 features across 9 groups. Uses gradient boosted stumps for non-linear pattern capture. Evaluated with expanding-window backtesting — no future data leakage.
 
 **2. Statistical Heuristic (25% weight)**
 Price percentile rank + z-score + volatility regime → signal. Simple, robust, deterministic. Never catastrophically wrong. The honest baseline that any advanced model must beat.
@@ -33,7 +33,7 @@ Weighted combination with confidence from source agreement. When all 4 sources a
   {
     id: "data",
     title: "Data Sources",
-    content: `## 21 Data Sources (Institutional Grade)
+    content: `## 21 Data Sources
 
 ### Market Prices (Yahoo Finance — 12 tickers)
 - **Cotton #2 (CT=F)** — Target variable, ICE benchmark
@@ -72,8 +72,8 @@ CottonGrower, TextileWorld, USDA, World Bank, Reuters Commodities, ICAC, Fibre2F
   },
   {
     id: "features",
-    title: "41 Features",
-    content: `## Feature Engineering (50 Features, 9 Groups)
+    title: "48 Features, 9 Groups",
+    content: `## Feature Engineering (48 Features, 9 Groups)
 
 ### Lag (3): cotton_lag_5d, 21d, 63d
 Autocorrelation in price series. Cotton shows mean-reversion at weekly scale, momentum at monthly.
@@ -90,7 +90,7 @@ Market state conditioning. Models need to know "what kind of market is this?"
 ### Technical (4): RSI-14, MA cross (50-200), distance from 52w high/low
 Standard TA signals. RSI-14 captures overbought/oversold. MA cross = trend confirmation.
 
-### Cross-Market (19): DXY/oil/VIX levels + lagged 5d/21d, ratios, soybean/wheat/corn, fertilizer, diesel, container freight, INR/BDT FX, polyester spread
+### Cross-Market (19): DXY/oil/VIX levels + lagged 5d/21d, ratios, soybean/wheat/corn, fertilizer, diesel, container freight, INR/BDT FX, polyester spread, corn return
 **Lagged features are key**: DXY at t-5 predicts cotton at t better than DXY at t. Currency repricing takes 3-7 days.
 **Input cost ratios**: cotton/fertilizer and cotton/diesel capture farmer profitability — when input costs rise faster than cotton price, acreage contracts.
 **Polyester spread**: cotton price minus polyester cost proxy — the actual substitution signal mills use.
@@ -104,7 +104,7 @@ NLP-derived market mood from financial news headlines.`,
   {
     id: "models",
     title: "Model Stack",
-    content: `## 6 Models + 3 HF AI Models
+    content: `## 8 Models + 3 HF AI Models
 
 ### Baselines (honest null hypothesis)
 - **Naive (Random Walk)**: Predicts zero return. If you can't beat this, your model has no value.
@@ -113,8 +113,10 @@ NLP-derived market mood from financial news headlines.`,
 - **Seasonal Naive**: Same-month-last-year return. Tests if seasonality alone has signal.
 
 ### Advanced
-- **Ridge Regression**: L2-regularized linear model. Handles multicollinearity in 41 correlated features. Lambda=0.01.
+- **Ridge Regression**: L2-regularized linear model. Handles multicollinearity in 48 correlated features. Lambda=0.01.
+- **Elastic Net (L1+L2)**: Combined L1/L2 regularization. Feature selection with multicollinearity stability in 48-feature space.
 - **Gradient Boosted Stumps**: 50 rounds of single-split decision trees (lr=0.1). Captures non-linear feature interactions without deep trees. Best bias-variance trade-off at our sample size (~1000 days).
+- **Gradient Boosted Trees (depth 3)**: Deeper trees capture higher-order conditional interactions (e.g., high vol AND low momentum AND harvest season). Complementary signal to stumps.
 
 ### HF AI Models
 - **Qwen 2.5 7B Instruct**: LLM analyst for news reasoning and price forecasting
@@ -153,7 +155,7 @@ Composite score: -RMSE + 0.5 * direction_accuracy. Must beat naive on at least o
 | **Vercel** | One-click deploy, edge network, serverless functions. |
 
 ### Why TypeScript ML?
-Ridge regression and gradient boosted stumps in pure TypeScript. A Python quant stack would need a separate microservice, Docker, API gateway. For 41 features and ~1000 training samples, TypeScript models are fast enough (<100ms) and far simpler to deploy.`,
+Ridge regression and gradient boosted stumps in pure TypeScript. A Python quant stack would need a separate microservice, Docker, API gateway. For 48 features and ~1000 training samples, TypeScript models are fast enough (<100ms) and far simpler to deploy.`,
   },
 ];
 

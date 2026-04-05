@@ -57,31 +57,27 @@ const DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct";
  * Provider routing. Each provider has a different URL pattern.
  * HF Pro token authenticates across all of them.
  */
+/**
+ * Provider list derived from HF model page "Inference Providers" field.
+ * Qwen/Qwen2.5-7B-Instruct shows: together (live), featherless-ai (live).
+ * We try featherless-ai first (better availability for 7B models).
+ */
 const PROVIDERS: { name: string; urlFn: (model: string) => string }[] = [
   {
-    // Together: model in body, not URL
+    name: "featherless-ai",
+    urlFn: () => "https://router.huggingface.co/featherless-ai/v1/chat/completions",
+  },
+  {
     name: "together",
     urlFn: () => "https://router.huggingface.co/together/v1/chat/completions",
   },
   {
-    // Novita: model in body
     name: "novita",
     urlFn: () => "https://router.huggingface.co/novita/v1/chat/completions",
   },
   {
-    // Fireworks: model in body
     name: "fireworks-ai",
     urlFn: () => "https://router.huggingface.co/fireworks-ai/v1/chat/completions",
-  },
-  {
-    // Cerebras: model in body
-    name: "cerebras",
-    urlFn: () => "https://router.huggingface.co/cerebras/v1/chat/completions",
-  },
-  {
-    // Sambanova: model in body
-    name: "sambanova",
-    urlFn: () => "https://router.huggingface.co/sambanova/v1/chat/completions",
   },
 ];
 

@@ -136,14 +136,22 @@ export async function GET(req: Request) {
     // === LAYER 2: LLM ADJUSTMENT ===
 
     // Fetch headlines + sentiment
-    const headlinesRes = await fetch(new URL("/api/headlines", req.url).toString()).catch(() => null);
+    // Construct base URL from request headers (serverless functions don't have reliable req.url base)
+    const host = req.headers.get("host") ?? "localhost:3000";
+    const proto = req.headers.get("x-forwarded-proto") ?? "https";
+    const baseUrl = `${proto}://${host}`;
+    const headlinesRes = await fetch(`${baseUrl}/api/headlines`, {
+      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en" },
+    }).catch((e) => { console.error("[prediction] Headlines fetch failed:", e); return null; });
     const headlines = headlinesRes?.ok ? await headlinesRes.json() : [];
+    console.info(`[prediction] Fetched ${headlines.length} headlines for LLM context`);
     const sentiment = await analyzeHeadlineSentiment(headlines).catch(() => null);
 
     let llmAdjustment = 0;
     let llmReasoning = "";
     let llmKeyEvent = "";
 
+    console.info(`[prediction] LLM adjustment: ${headlines.length} headlines, calling HF chat...`);
     if (headlines.length > 0) {
       const headlineText = headlines
         .slice(0, 12)
@@ -184,7 +192,9 @@ export async function GET(req: Request) {
     ) / 10000;
 
     // CI from realized vol (market-consistent)
-    const pricesRes = await fetch(new URL("/api/prices", req.url).toString()).catch(() => null);
+    const pricesRes = await fetch(`${baseUrl}/api/prices`, {
+      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en" },
+    }).catch(() => null);
     let vol30d = 20; // default
     if (pricesRes?.ok) {
       const pd = await pricesRes.json();

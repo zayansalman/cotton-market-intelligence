@@ -38,7 +38,10 @@ export interface ChatCompletionOptions {
 /*  Default model                                                      */
 /* ------------------------------------------------------------------ */
 
-const DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct";
+// Qwen2.5-7B-Instruct is ideal but often unavailable on free tier.
+// Fallback order: Llama 3.1 8B (widely available on novita/together),
+// then Qwen as override if user configures HF_STRATEGY_MODEL.
+const DEFAULT_MODEL = "meta-llama/Llama-3.1-8B-Instruct";
 
 /**
  * Provider routing for chat models. The free hf-inference tier no longer

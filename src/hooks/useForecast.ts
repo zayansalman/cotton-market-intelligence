@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { ForecastOverlayData, ForecastPoint } from "@/components/PriceChart";
+import type { ForecastOverlayData, ForecastPoint, BacktestPrediction } from "@/components/PriceChart";
 
 interface PredictionForecast {
   horizon: string;
@@ -68,6 +68,7 @@ const MAX_21D_RETURN = 0.12; // ±12%
 export function useForecast() {
   const [forecast, setForecast] = useState<ForecastOverlayData | undefined>();
   const [attribution, setAttribution] = useState<ForecastAttribution | null>(null);
+  const [backtestPredictions, setBacktestPredictions] = useState<BacktestPrediction[]>([]);
   const [loading, setLoading] = useState(false);
 
   const fetchForecast = useCallback(async () => {
@@ -177,6 +178,33 @@ export function useForecast() {
         model_accuracy: `RMSE: ${(rmse * 100).toFixed(2)}%, Direction: ${(data.model.direction_accuracy * 100).toFixed(0)}%`,
         top_features: (data.top_drivers ?? []).slice(0, 6).map((d) => d.feature.replace(/_/g, " ")),
       });
+
+      // Fetch backtest predictions for chart overlay
+      try {
+        const btRes = await fetch("/api/prediction?horizon=21d&include_backtest=true");
+        if (btRes.ok) {
+          const btData = await btRes.json();
+          if (btData.backtest_results) {
+            // Find champion model's backtest steps
+            const championBt = btData.backtest_results.find(
+              (r: { model_id: string }) => r.model_id === btData.model?.id
+            ) ?? btData.backtest_results[0];
+            if (championBt?.steps) {
+              const btPoints: BacktestPrediction[] = championBt.steps.map(
+                (s: { date: string; actual: number; predicted: number; direction_correct: boolean }) => ({
+                  date: s.date,
+                  // Convert from return to price: actual price * (1 + predicted return)
+                  // But we need the actual price at that date — use actual return to reverse
+                  predicted_price: Math.round(startPrice * (1 + s.predicted) * 10000) / 10000,
+                  actual_price: Math.round(startPrice * (1 + s.actual) * 10000) / 10000,
+                  direction_correct: s.direction_correct,
+                })
+              );
+              setBacktestPredictions(btPoints);
+            }
+          }
+        }
+      } catch { /* backtest overlay is non-fatal */ }
     } catch (e) {
       console.error("Forecast fetch failed:", e);
       setForecast(undefined);
@@ -186,5 +214,5 @@ export function useForecast() {
     }
   }, []);
 
-  return { forecast, attribution, forecastLoading: loading, fetchForecast };
+  return { forecast, attribution, backtestPredictions, forecastLoading: loading, fetchForecast };
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -45,6 +46,7 @@ interface ChartPoint {
   forecast: number | null;
   forecast_upper: number | null;
   forecast_lower: number | null;
+  backtest_pred?: number | null;
 }
 
 function mergeData(
@@ -94,17 +96,44 @@ function mergeData(
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
+/** Backtest prediction point — model's historical prediction at a given date. */
+export interface BacktestPrediction {
+  date: string;
+  predicted_price: number;
+  actual_price: number;
+  direction_correct: boolean;
+}
+
 export default function PriceChart({
   prices,
   benchmarks,
   forecast,
+  backtestPredictions,
 }: {
   prices: PricePoint[];
   benchmarks: Benchmarks;
   forecast?: ForecastOverlayData;
+  backtestPredictions?: BacktestPrediction[];
 }) {
+  const [showMA50, setShowMA50] = useState(true);
+  const [showMA200, setShowMA200] = useState(true);
+  const [showForecast, setShowForecast] = useState(true);
+  const [showBacktest, setShowBacktest] = useState(true);
+
   const data = mergeData(prices, forecast);
-  const hasForecast = forecast && forecast.points.length > 0;
+  const hasForecast = forecast && forecast.points.length > 0 && showForecast;
+  const hasBacktest = backtestPredictions && backtestPredictions.length > 0 && showBacktest;
+
+  // Merge backtest predictions into chart data
+  if (hasBacktest) {
+    const btMap = new Map(backtestPredictions!.map((p) => [p.date, p]));
+    for (const point of data) {
+      const bt = btMap.get(point.date);
+      if (bt) {
+        point.backtest_pred = bt.predicted_price;
+      }
+    }
+  }
 
   // Color for forecast line based on direction
   const forecastColor =
@@ -116,6 +145,29 @@ export default function PriceChart({
 
   return (
     <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
+      {/* Toggle controls */}
+      <div className="flex flex-wrap gap-2 mb-3">
+        {[
+          { label: "50d MA", active: showMA50, toggle: () => setShowMA50(!showMA50), color: "#ff9100" },
+          { label: "200d MA", active: showMA200, toggle: () => setShowMA200(!showMA200), color: "#ff1744" },
+          ...(forecast?.points.length ? [{ label: "Forecast", active: showForecast, toggle: () => setShowForecast(!showForecast), color: forecastColor }] : []),
+          ...(backtestPredictions?.length ? [{ label: "Backtest", active: showBacktest, toggle: () => setShowBacktest(!showBacktest), color: "#a78bfa" }] : []),
+        ].map((t) => (
+          <button
+            key={t.label}
+            onClick={t.toggle}
+            className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+              t.active
+                ? "border-current opacity-100"
+                : "border-zinc-700 opacity-40"
+            }`}
+            style={{ color: t.color }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {hasForecast && (
         <div className="flex items-center gap-2 mb-2 text-xs text-zinc-400">
           <span
@@ -194,27 +246,45 @@ export default function PriceChart({
             connectNulls={false}
           />
 
-          {/* Moving averages */}
-          <Line
-            type="monotone"
-            dataKey="ma50"
-            name="50d MA"
-            stroke="#ff9100"
-            strokeWidth={1}
-            strokeDasharray="5 5"
-            dot={false}
-            connectNulls
-          />
-          <Line
-            type="monotone"
-            dataKey="ma200"
-            name="200d MA"
-            stroke="#ff1744"
-            strokeWidth={1}
-            strokeDasharray="2 4"
-            dot={false}
-            connectNulls
-          />
+          {/* Moving averages (toggleable) */}
+          {showMA50 && (
+            <Line
+              type="monotone"
+              dataKey="ma50"
+              name="50d MA"
+              stroke="#ff9100"
+              strokeWidth={1}
+              strokeDasharray="5 5"
+              dot={false}
+              connectNulls
+            />
+          )}
+          {showMA200 && (
+            <Line
+              type="monotone"
+              dataKey="ma200"
+              name="200d MA"
+              stroke="#ff1744"
+              strokeWidth={1}
+              strokeDasharray="2 4"
+              dot={false}
+              connectNulls
+            />
+          )}
+
+          {/* Backtest predictions (toggleable) */}
+          {hasBacktest && (
+            <Line
+              type="monotone"
+              dataKey="backtest_pred"
+              name="Model Backtest"
+              stroke="#a78bfa"
+              strokeWidth={1.5}
+              strokeDasharray="3 2"
+              dot={{ r: 2, fill: "#a78bfa" }}
+              connectNulls={false}
+            />
+          )}
 
           {/* Forecast confidence band */}
           {hasForecast && (

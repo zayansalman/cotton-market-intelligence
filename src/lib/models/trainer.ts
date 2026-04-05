@@ -10,9 +10,15 @@ import type { FeatureRow } from "@/lib/pipeline/features";
 import { naiveModel, historicalMeanModel, movingAverageModel, seasonalNaiveModel } from "./baselines";
 import { linearModel } from "./linear";
 import { boostedStumpsModel } from "./tree";
+import { boostedTreesModel } from "./boosted-trees";
+import { elasticNetModel } from "./elastic-net";
 
 /* ------------------------------------------------------------------ */
 /*  Model registry                                                     */
+/*                                                                      */
+/*  Order: baselines first (honest null hypothesis), then increasing   */
+/*  complexity. This is the standard at systematic commodity funds —   */
+/*  you must prove each step of complexity adds value.                 */
 /* ------------------------------------------------------------------ */
 
 export const MODEL_REGISTRY: ForecastModel[] = [
@@ -21,7 +27,9 @@ export const MODEL_REGISTRY: ForecastModel[] = [
   movingAverageModel,
   seasonalNaiveModel,
   linearModel,
+  elasticNetModel,
   boostedStumpsModel,
+  boostedTreesModel,
 ];
 
 /* ------------------------------------------------------------------ */
@@ -105,6 +113,8 @@ export interface TrainResult {
   horizon: Horizon;
   results: ModelResult[];
   champion: ModelResult;
+  /** Top 3 model IDs for ensemble prediction. */
+  top3Ids: string[];
 }
 
 /**
@@ -166,16 +176,30 @@ export function trainAndEvaluate(
 
   const sorted = [...candidates].sort((a, b) => score(b) - score(a));
 
-  // Champion: best scoring model that improves over naive on RMSE or direction
+  // Top-3 ensemble: blend predictions from best 3 models weighted by
+  // inverse RMSE. This is standard at systematic funds — no single model
+  // dominates across all regimes. Ensembling reduces variance.
+  const qualifiedModels = sorted.filter(
+    (r) =>
+      naiveResult &&
+      (r.rmse < naiveResult.rmse ||
+        r.direction_accuracy > naiveResult.direction_accuracy + 0.05)
+  );
+
   const champion =
-    sorted.length > 0 &&
-    naiveResult &&
-    (sorted[0].rmse < naiveResult.rmse ||
-     sorted[0].direction_accuracy > naiveResult.direction_accuracy + 0.05)
-      ? sorted[0]
+    qualifiedModels.length > 0
+      ? qualifiedModels[0]
       : naiveResult ?? results[0];
 
-  return { horizon, results, champion };
+  // Store top-3 model IDs for ensemble prediction at inference time
+  const top3Ids = (qualifiedModels.length >= 3
+    ? qualifiedModels.slice(0, 3)
+    : qualifiedModels.length > 0
+      ? qualifiedModels
+      : [naiveResult ?? results[0]]
+  ).map((r) => r.model_id);
+
+  return { horizon, results, champion, top3Ids };
 }
 
 /**

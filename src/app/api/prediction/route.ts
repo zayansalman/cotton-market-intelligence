@@ -1,18 +1,15 @@
 /**
- * /api/prediction — LLM-powered price prediction.
+ * /api/prediction — LLM price prediction with full cross-market context.
  *
- * WHY LLM-FIRST (not statistical models):
- * Statistical models on ~1000 samples of daily commodity data pick
- * "Moving Average" or "Naive" as champion because returns are noisy.
- * These models have ZERO predictive intelligence — they just minimize
- * error by predicting close to the current price.
+ * The LLM sees EVERYTHING a senior commodity analyst would:
+ * - Cotton price + statistical benchmarks (percentile, z-score, vol, MAs)
+ * - Cross-market signals (DXY, oil, soybeans, wheat, corn, VIX, yields, freight)
+ * - Input costs (fertilizer, diesel)
+ * - FX rates (CNY, INR, BDT)
+ * - News headlines with NLP sentiment scores
  *
- * An LLM can reason: "price is rallying + India export ban + Brazil
- * drought = supply squeeze = momentum continues." This is what every
- * real commodity analyst does — they read data AND context.
- *
- * The statistical benchmarks (percentile, vol, momentum, MAs) are
- * provided as CONTEXT to the LLM, not as standalone models.
+ * The LLM reasons about causality and predicts a specific price level.
+ * Not a toy statistical model — a genuine analytical judgment.
  *
  * GET ?horizon=21d
  */
@@ -23,7 +20,7 @@ import {
   evaluateRequestRateLimit,
   rateLimitExceededResponse,
 } from "@/lib/rate-limit";
-import { safeErrorResponse } from "@/lib/api-security";
+import { safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
 import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { hfChatCompletion, parseJsonResponse } from "@/lib/hf/client";
 import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
@@ -31,35 +28,80 @@ import type { Horizon } from "@/lib/models/types";
 
 const VALID_HORIZONS: Horizon[] = ["5d", "21d", "63d"];
 
-const PRICE_PREDICTION_PROMPT = `You are a senior cotton commodity analyst at a top global trading house.
+/* ------------------------------------------------------------------ */
+/*  Fast cross-market quote fetcher                                    */
+/* ------------------------------------------------------------------ */
 
-You will be given:
-- Current Cotton #2 futures price and statistical context
-- Recent news headlines with sentiment analysis
-- Cross-market signals
+interface QuickQuote {
+  ticker: string;
+  label: string;
+  price: number | null;
+  change_pct: number | null;
+}
 
-Your job: predict the PRICE LEVEL of Cotton #2 futures at the specified horizon.
+async function fetchQuickQuote(ticker: string, label: string): Promise<QuickQuote> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=1mo&interval=1d`;
+    const res = await fetchWithTimeout(url, {
+      timeout: 5_000,
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+    if (!res.ok) return { ticker, label, price: null, change_pct: null };
+    const data = await res.json();
+    const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+    if (!closes || closes.length < 2) return { ticker, label, price: null, change_pct: null };
+    const current = closes[closes.length - 1];
+    const prev = closes[0]; // ~1 month ago
+    if (current == null || prev == null) return { ticker, label, price: null, change_pct: null };
+    return {
+      ticker, label,
+      price: Math.round(current * 100) / 100,
+      change_pct: Math.round(((current - prev) / prev) * 1000) / 10,
+    };
+  } catch {
+    return { ticker, label, price: null, change_pct: null };
+  }
+}
 
-THINK LIKE A TRADER:
-- If price is rallying with supply disruption news → momentum likely continues
-- If DXY is strengthening → cotton gets more expensive for buyers → demand pressure down
-- India/Brazil supply issues → global tightness → price support/increase
-- High volatility + bullish news → could overshoot to upside
-- Price at 99th percentile BUT with genuine supply shock → can go higher (don't mean-revert into a supply squeeze)
+/* ------------------------------------------------------------------ */
+/*  System prompt                                                      */
+/* ------------------------------------------------------------------ */
 
-IMPORTANT: Give a SPECIFIC price prediction, not just direction.
+const PRICE_PREDICTION_PROMPT = `You are a senior cotton commodity analyst at Glencore/Cargill/Louis Dreyfus.
+
+You have the FULL market picture:
+- Cotton #2 ICE futures data and statistical benchmarks
+- Cross-market signals: USD, oil, soybeans, wheat, corn, VIX, yields, freight, fertilizer, diesel
+- Producer/consumer FX rates: CNY, INR, BDT
+- News headlines with NLP sentiment
+- Your deep knowledge of cotton supply chains, seasonality, and geopolitics
+
+REASONING FRAMEWORK (how top desks think):
+1. MOMENTUM: Is price trending? 30d/90d changes, position vs MAs. Trend continuation is the base case.
+2. SUPPLY: Soybeans/wheat/corn up = less cotton acreage (6-9mo lag). Fertilizer/diesel up = higher production costs = price floor. India/Brazil news = supply shocks.
+3. DEMAND: China PMI, DXY (inverse — strong USD = weak demand from non-USD buyers), consumer sentiment.
+4. SUBSTITUTION: Oil up = polyester more expensive = cotton demand up. Cotton/oil spread matters.
+5. RISK REGIME: VIX high = risk-off = commodities sell. VIX low = risk-on = supports commodities.
+6. NEWS: What does the news tell you about the NEXT 1-3 months, not just today?
+7. SEASONALITY: Northern hemisphere planting Mar-May, harvest Oct-Dec. Bangladesh peak procurement Aug-Dec.
+
+GIVE A SPECIFIC PRICE PREDICTION with reasoning tied to these signals.
 
 Return ONLY valid JSON:
 {
-  "predicted_price": <predicted $/lb price, e.g., 0.7250>,
+  "predicted_price": <$/lb, e.g., 0.7250>,
   "direction": "up" | "down" | "flat",
   "confidence": <0-100>,
-  "reasoning": "<2-3 sentences explaining WHY you predict this price level>",
+  "reasoning": "<3-4 sentences explaining the key drivers of your price target>",
   "key_factors": [
-    {"factor": "<what>", "impact": "bullish" | "bearish", "magnitude": "high" | "medium" | "low"}
+    {"factor": "<specific signal>", "impact": "bullish" | "bearish", "magnitude": "high" | "medium" | "low"}
   ],
-  "risk": "<what could make this prediction wrong>"
+  "risk": "<1-2 sentences on what could invalidate this forecast>"
 }`;
+
+/* ------------------------------------------------------------------ */
+/*  Route handler                                                      */
+/* ------------------------------------------------------------------ */
 
 export async function GET(req: Request) {
   const abuse = checkAbuse(req);
@@ -75,15 +117,31 @@ export async function GET(req: Request) {
       ? (horizonParam as Horizon)
       : "21d";
 
-    // Fetch market data + headlines in parallel
     const host = req.headers.get("host") ?? "localhost:3000";
     const proto = req.headers.get("x-forwarded-proto") ?? "https";
     const baseUrl = `${proto}://${host}`;
-    const headers = { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en" };
+    const hdrs = { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en" };
 
-    const [pricesRes, headlinesRes] = await Promise.all([
-      fetch(`${baseUrl}/api/prices`, { headers }).catch(() => null),
-      fetch(`${baseUrl}/api/headlines`, { headers }).catch(() => null),
+    // Fetch EVERYTHING in parallel — cotton data, headlines, cross-market
+    const [pricesRes, headlinesRes, ...crossMarketQuotes] = await Promise.all([
+      fetch(`${baseUrl}/api/prices`, { headers: hdrs }).catch(() => null),
+      fetch(`${baseUrl}/api/headlines`, { headers: hdrs }).catch(() => null),
+      // Cross-market quotes (5s timeout each, all parallel)
+      fetchQuickQuote("DX-Y.NYB", "US Dollar Index (DXY)"),
+      fetchQuickQuote("CL=F", "WTI Crude Oil"),
+      fetchQuickQuote("ZS=F", "Soybeans"),
+      fetchQuickQuote("ZW=F", "Wheat"),
+      fetchQuickQuote("ZC=F", "Corn"),
+      fetchQuickQuote("^VIX", "VIX"),
+      fetchQuickQuote("^TNX", "US 10Y Treasury Yield"),
+      fetchQuickQuote("NG=F", "Natural Gas"),
+      fetchQuickQuote("MOS", "Mosaic (Fertilizer proxy)"),
+      fetchQuickQuote("HO=F", "Diesel (ULSD)"),
+      fetchQuickQuote("CNY=X", "CNY/USD"),
+      fetchQuickQuote("ZIM", "ZIM Shipping (Container freight)"),
+      fetchQuickQuote("^GSPC", "S&P 500"),
+      fetchQuickQuote("INR=X", "INR/USD"),
+      fetchQuickQuote("BDT=X", "BDT/USD"),
     ]);
 
     if (!pricesRes?.ok) {
@@ -97,47 +155,55 @@ export async function GET(req: Request) {
     const bm = pricesData.benchmarks;
     const currentPrice = bm.current_price;
     const headlines = headlinesRes?.ok ? await headlinesRes.json() : [];
-
-    // Sentiment analysis (fast — classification model, not LLM)
     const sentiment = await analyzeHeadlineSentiment(headlines).catch(() => null);
 
-    // Build rich context for LLM
+    // Build cross-market context string
+    const crossMarket = (crossMarketQuotes as QuickQuote[])
+      .filter((q) => q.price != null)
+      .map((q) => {
+        const dir = q.change_pct! > 1 ? "UP" : q.change_pct! < -1 ? "DOWN" : "FLAT";
+        return `  ${q.label}: ${q.price} (${q.change_pct! > 0 ? "+" : ""}${q.change_pct}% 1mo) [${dir}]`;
+      })
+      .join("\n");
+
     const horizonLabel = horizon === "5d" ? "1 week" : horizon === "21d" ? "1 month" : "3 months";
     const headlineText = headlines
-      .slice(0, 15)
+      .slice(0, 12)
       .map((h: { title: string; summary?: string }, i: number) =>
         `${i + 1}. ${h.title}${h.summary ? ` — ${h.summary.slice(0, 100)}` : ""}`
       )
       .join("\n");
 
     const sentimentText = sentiment
-      ? `News Sentiment: ${sentiment.label.toUpperCase()} (score: ${sentiment.aggregate_score.toFixed(2)}, ${sentiment.positive_pct}% positive, ${sentiment.negative_pct}% negative, ${sentiment.n_headlines} headlines)`
+      ? `NLP Sentiment: ${sentiment.label.toUpperCase()} (score: ${sentiment.aggregate_score.toFixed(2)}, ${sentiment.positive_pct}% pos / ${sentiment.negative_pct}% neg)`
       : "";
 
-    const userMsg = `CURRENT MARKET STATE (Cotton #2 Futures):
+    const userMsg = `=== COTTON #2 FUTURES ===
 Price: $${currentPrice.toFixed(4)}/lb (${bm.price_date})
-1Y Percentile: ${(bm.pct_rank_1y * 100).toFixed(0)}% ${bm.pct_rank_1y > 0.8 ? "(HISTORICALLY EXPENSIVE)" : bm.pct_rank_1y < 0.2 ? "(HISTORICALLY CHEAP)" : "(MID-RANGE)"}
-Z-Score: ${bm.z_score_1y.toFixed(2)}
+1Y Percentile: ${(bm.pct_rank_1y * 100).toFixed(0)}% ${bm.pct_rank_1y > 0.8 ? "[HISTORICALLY EXPENSIVE]" : bm.pct_rank_1y < 0.2 ? "[HISTORICALLY CHEAP]" : "[MID-RANGE]"}
+Z-Score: ${bm.z_score_1y.toFixed(2)} ${Math.abs(bm.z_score_1y) > 2 ? "[EXTREME]" : ""}
 30d Change: ${bm.change_30d_pct > 0 ? "+" : ""}${bm.change_30d_pct.toFixed(1)}%
 90d Change: ${bm.change_90d_pct > 0 ? "+" : ""}${bm.change_90d_pct.toFixed(1)}%
-30d Volatility: ${bm.vol_30d_ann.toFixed(1)}% annualized
-50d MA: $${bm.ma_50d.toFixed(4)} (price ${bm.above_ma_50d ? "ABOVE — bullish" : "BELOW — bearish"})
-200d MA: $${bm.ma_200d.toFixed(4)} (price ${bm.above_ma_200d ? "ABOVE — long-term bullish" : "BELOW — long-term bearish"})
-1Y Range: $${bm.low_1y.toFixed(4)} (low) – $${bm.high_1y.toFixed(4)} (high)
+Volatility: ${bm.vol_30d_ann.toFixed(1)}% (30d ann.) ${bm.vol_30d_ann > 30 ? "[HIGH — spread risk]" : bm.vol_30d_ann < 15 ? "[LOW — trending]" : "[NORMAL]"}
+50d MA: $${bm.ma_50d.toFixed(4)} (${bm.above_ma_50d ? "ABOVE" : "BELOW"})
+200d MA: $${bm.ma_200d.toFixed(4)} (${bm.above_ma_200d ? "ABOVE — long-term bullish" : "BELOW — long-term bearish"})
+1Y Range: $${bm.low_1y.toFixed(4)} – $${bm.high_1y.toFixed(4)}
+
+=== CROSS-MARKET SIGNALS (1-month changes) ===
+${crossMarket || "  Cross-market data unavailable"}
+
+=== NEWS HEADLINES ===
+${headlineText || "  No recent headlines."}
 
 ${sentimentText}
 
-RECENT NEWS:
-${headlineText || "No recent headlines."}
-
-PREDICTION HORIZON: ${horizonLabel}
-
-Given all signals — price momentum, technical positioning, news context, and sentiment — predict where Cotton #2 will be in ${horizonLabel}. Give a specific price.`;
+=== TASK ===
+Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
 
     // Call LLM
     let predictedPrice = currentPrice;
     let direction: "up" | "down" | "flat" = "flat";
-    let confidence = 40;
+    let confidence = 35;
     let reasoning = "";
     let keyFactors: { factor: string; impact: string; magnitude: string }[] = [];
     let risk = "";
@@ -148,7 +214,7 @@ Given all signals — price momentum, technical positioning, news context, and s
         { role: "system", content: PRICE_PREDICTION_PROMPT },
         { role: "user", content: userMsg },
       ],
-      max_tokens: 400,
+      max_tokens: 500,
       temperature: 0.2,
     });
 
@@ -156,7 +222,6 @@ Given all signals — price momentum, technical positioning, news context, and s
       const parsed = parseJsonResponse(llmText);
       if (parsed && parsed.predicted_price) {
         const pp = Number(parsed.predicted_price);
-        // Sanity: predicted price within ±15% of current
         if (pp > currentPrice * 0.85 && pp < currentPrice * 1.15) {
           predictedPrice = Math.round(pp * 10000) / 10000;
           direction = String(parsed.direction) === "up" ? "up" : String(parsed.direction) === "down" ? "down" : "flat";
@@ -169,28 +234,23 @@ Given all signals — price momentum, technical positioning, news context, and s
       }
     }
 
-    // If LLM failed, use simple heuristic (momentum + mean reversion blend)
+    // Heuristic fallback
     if (source === "heuristic") {
-      const momentum = bm.change_30d_pct / 100; // Recent momentum
-      const meanRev = (0.5 - bm.pct_rank_1y) * 0.03; // Mean reversion pull
-      const blend = momentum * 0.6 + meanRev * 0.4; // 60% momentum, 40% mean reversion
+      const momentum = bm.change_30d_pct / 100;
+      const meanRev = (0.5 - bm.pct_rank_1y) * 0.03;
+      const blend = momentum * 0.6 + meanRev * 0.4;
       const cappedReturn = Math.max(-0.08, Math.min(0.08, blend));
       predictedPrice = Math.round(currentPrice * (1 + cappedReturn) * 10000) / 10000;
       direction = cappedReturn > 0.003 ? "up" : cappedReturn < -0.003 ? "down" : "flat";
-      confidence = 35;
-      reasoning = `Heuristic: 60% momentum (${bm.change_30d_pct > 0 ? "+" : ""}${bm.change_30d_pct.toFixed(1)}% 30d) + 40% mean reversion (${(bm.pct_rank_1y * 100).toFixed(0)}th percentile). LLM unavailable.`;
+      reasoning = `Heuristic: momentum (${bm.change_30d_pct > 0 ? "+" : ""}${bm.change_30d_pct.toFixed(1)}% 30d) + mean reversion (${(bm.pct_rank_1y * 100).toFixed(0)}th pct). LLM unavailable.`;
     }
 
     const predictedReturn = (predictedPrice - currentPrice) / currentPrice;
-
-    // CI from realized vol
     const horizonDays = horizon === "5d" ? 5 : horizon === "21d" ? 21 : 63;
     const ciWidth = (bm.vol_30d_ann / 100) * Math.sqrt(horizonDays / 252) * 1.96;
-    const lowerPrice = Math.round(currentPrice * (1 - ciWidth) * 10000) / 10000;
-    const upperPrice = Math.round(currentPrice * (1 + ciWidth) * 10000) / 10000;
 
     const response = {
-      version: 5,
+      version: 6,
       generated_at: new Date().toISOString(),
       current_price: Math.round(currentPrice * 10000) / 10000,
       current_date: bm.price_date,
@@ -198,8 +258,8 @@ Given all signals — price momentum, technical positioning, news context, and s
         horizon,
         predicted_return: Math.round(predictedReturn * 100000) / 100000,
         predicted_price: predictedPrice,
-        lower_price: lowerPrice,
-        upper_price: upperPrice,
+        lower_price: Math.round(currentPrice * (1 - ciWidth) * 10000) / 10000,
+        upper_price: Math.round(currentPrice * (1 + ciWidth) * 10000) / 10000,
         confidence_level: 0.95,
         direction,
       }],
@@ -218,6 +278,8 @@ Given all signals — price momentum, technical positioning, news context, and s
         feature: f.factor,
         importance: f.magnitude === "high" ? 0.8 : f.magnitude === "medium" ? 0.5 : 0.2,
       })),
+      // What the LLM saw (transparency)
+      cross_market_signals: (crossMarketQuotes as QuickQuote[]).filter((q) => q.price != null),
       sentiment,
       hf_forecasts: source !== "heuristic" ? [{
         provider: "hf_llm",

@@ -122,39 +122,76 @@ export async function GET(req: Request) {
       }
     } catch { /* non-fatal — sentiment stays at 0 */ }
 
-    // Fast path: single train/test split for real-time prediction (<2s).
-    // Walk-forward is too heavy for serverless (400+ model trainings, >10s timeout).
-    // Walk-forward is available via include_backtest=true for analysis.
+    // Train all models on 85/15 split (fast, <2s on serverless).
     const { MODEL_REGISTRY } = await import("@/lib/models/trainer");
     const trainResult = trainAndEvaluate(featureRows, horizon, 0.85);
     const champion = trainResult.champion;
 
-    // Get latest feature row for prediction
+    // Get latest features (exclude sentiment_score — same as training)
     const latestRow = featureRows[featureRows.length - 1];
-    const featureNames = Object.keys(latestRow.features);
+    const featureNames = Object.keys(latestRow.features).filter(
+      (name) => name !== "sentiment_score"
+    );
     const latestFeatures = featureNames.map((name) => {
       const v = latestRow.features[name];
       return v != null && Number.isFinite(v) ? v : 0;
     });
 
-    // Find the model instance and predict
-    const modelInstance = MODEL_REGISTRY.find((m) => m.meta.id === champion.model_id);
-    if (!modelInstance) {
-      return applyRateLimitHeaders(
-        NextResponse.json({ error: "Model not found" }, { status: 500 }),
-        rateLimit.headers
+    // TOP-3 ENSEMBLE PREDICTION
+    // No single model dominates across all regimes. Blending top 3 by
+    // inverse-RMSE weighting reduces variance. Standard at every systematic fund.
+    const top3Models = trainResult.top3Ids
+      .map((id) => {
+        const model = MODEL_REGISTRY.find((m) => m.meta.id === id);
+        const result = trainResult.results.find((r) => r.model_id === id);
+        return model && result ? { model, result } : null;
+      })
+      .filter((m): m is NonNullable<typeof m> => m !== null);
+
+    let predictedReturn: number;
+    let ensembleRmse: number;
+    const currentPrice = latestRow.target;
+
+    if (top3Models.length > 1) {
+      // Inverse-RMSE weighted ensemble
+      const weights = top3Models.map((m) =>
+        m.result.rmse > 0 ? 1 / m.result.rmse : 1
       );
+      const totalWeight = weights.reduce((s, w) => s + w, 0);
+      const normalizedWeights = weights.map((w) => w / totalWeight);
+
+      predictedReturn = 0;
+      for (let i = 0; i < top3Models.length; i++) {
+        const pred = top3Models[i].model.predict(
+          top3Models[i].result.state,
+          latestFeatures
+        );
+        predictedReturn += normalizedWeights[i] * pred.value;
+      }
+      ensembleRmse = champion.rmse; // Use champion's RMSE for CI
+    } else {
+      // Single model fallback
+      const modelInstance = MODEL_REGISTRY.find(
+        (m) => m.meta.id === champion.model_id
+      );
+      predictedReturn = modelInstance
+        ? modelInstance.predict(champion.state, latestFeatures).value
+        : 0;
+      ensembleRmse = champion.rmse;
     }
 
-    const prediction = modelInstance.predict(champion.state, latestFeatures);
-    const currentPrice = latestRow.target;
-    const predictedReturn = prediction.value;
-    const predictedPrice = Math.round(currentPrice * (1 + predictedReturn) * 10000) / 10000;
+    const predictedPrice = Math.round(
+      currentPrice * (1 + predictedReturn) * 10000
+    ) / 10000;
 
-    // Simple prediction interval based on test RMSE
-    const intervalWidth = champion.rmse * 1.96; // ~95% CI
-    const lowerPrice = Math.round(currentPrice * (1 + predictedReturn - intervalWidth) * 10000) / 10000;
-    const upperPrice = Math.round(currentPrice * (1 + predictedReturn + intervalWidth) * 10000) / 10000;
+    // 95% CI from RMSE
+    const intervalWidth = ensembleRmse * 1.96;
+    const lowerPrice = Math.round(
+      currentPrice * (1 + predictedReturn - intervalWidth) * 10000
+    ) / 10000;
+    const upperPrice = Math.round(
+      currentPrice * (1 + predictedReturn + intervalWidth) * 10000
+    ) / 10000;
 
     const direction: "up" | "down" | "flat" =
       predictedReturn > 0.005 ? "up" : predictedReturn < -0.005 ? "down" : "flat";

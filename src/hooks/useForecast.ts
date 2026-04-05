@@ -133,13 +133,28 @@ export function useForecast() {
         });
       }
 
-      // Compute blended forecast return (capped to realistic range)
+      // Compute blended forecast return.
+      // If model returns near-zero (naive or flat prediction), use any
+      // available signal — HF forecasts, or the 5d/63d horizons which
+      // might have more signal. A flat forecast is useless for procurement.
       let finalReturn = localReturn;
+
+      // Blend with HF when local is flat and HF has a view
       if (Math.abs(localReturn) < 0.003 && hfCount > 0) {
-        // Local is flat — blend with HF
-        finalReturn = (localReturn + hfBlendReturn) / 2;
+        finalReturn = hfBlendReturn; // Use HF signal directly, not 50/50
       }
-      // Cap to realistic bounds
+
+      // If still flat, check other horizons for any signal
+      if (Math.abs(finalReturn) < 0.003) {
+        const altForecast = data.forecasts.find(
+          (f) => Math.abs(f.predicted_return) > 0.003
+        );
+        if (altForecast) {
+          finalReturn = altForecast.predicted_return;
+        }
+      }
+
+      // Cap to realistic bounds (cotton rarely moves >12% in 21 days)
       finalReturn = Math.max(-MAX_21D_RETURN, Math.min(MAX_21D_RETURN, finalReturn));
 
       const endPrice = Math.round(startPrice * (1 + finalReturn) * 10000) / 10000;
@@ -179,29 +194,23 @@ export function useForecast() {
         top_features: (data.top_drivers ?? []).slice(0, 6).map((d) => d.feature.replace(/_/g, " ")),
       });
 
-      // Fetch backtest predictions for chart overlay
+      // Fetch strategy backtest for chart overlay (lightweight, no model walk-forward)
       try {
-        const btRes = await fetch("/api/prediction?horizon=21d&include_backtest=true");
+        const btRes = await fetch(
+          `/api/backtest?tonnage=2000&months=6&step_months=3`
+        );
         if (btRes.ok) {
           const btData = await btRes.json();
-          if (btData.backtest_results) {
-            // Find champion model's backtest steps
-            const championBt = btData.backtest_results.find(
-              (r: { model_id: string }) => r.model_id === btData.model?.id
-            ) ?? btData.backtest_results[0];
-            if (championBt?.steps) {
-              const btPoints: BacktestPrediction[] = championBt.steps.map(
-                (s: { date: string; actual: number; predicted: number; direction_correct: boolean }) => ({
-                  date: s.date,
-                  // Convert from return to price: actual price * (1 + predicted return)
-                  // But we need the actual price at that date — use actual return to reverse
-                  predicted_price: Math.round(startPrice * (1 + s.predicted) * 10000) / 10000,
-                  actual_price: Math.round(startPrice * (1 + s.actual) * 10000) / 10000,
-                  direction_correct: s.direction_correct,
-                })
-              );
-              setBacktestPredictions(btPoints);
-            }
+          if (btData.steps) {
+            const btPoints: BacktestPrediction[] = btData.steps.map(
+              (s: { decision_date: string; price_at_decision: number; weighted_exec_price: number; savings_pct: number }) => ({
+                date: s.decision_date,
+                predicted_price: s.weighted_exec_price,
+                actual_price: s.price_at_decision,
+                direction_correct: s.savings_pct > 0,
+              })
+            );
+            setBacktestPredictions(btPoints);
           }
         }
       } catch { /* backtest overlay is non-fatal */ }

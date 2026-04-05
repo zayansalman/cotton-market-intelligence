@@ -151,6 +151,6 @@ export const linearModel: ForecastModel = {
     if (features.length !== coef.length) return { value: 0 };
 
     const value = intercept + dotProduct(coef, features);
-    return { value: Math.max(-0.5, Math.min(0.5, value)) }; // Clamp extreme predictions
+    return { value };
   },
 };

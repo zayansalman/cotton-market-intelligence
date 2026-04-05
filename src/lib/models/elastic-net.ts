@@ -166,6 +166,6 @@ export const elasticNetModel: ForecastModel = {
         value += coef[i] * features[i];
       }
     }
-    return { value: Math.max(-0.5, Math.min(0.5, value)) };
+    return { value };
   },
 };

@@ -111,21 +111,27 @@ export async function GET(req: Request) {
       })
       .filter((m): m is NonNullable<typeof m> => m !== null);
 
-    let modelReturn: number;
+    // Model now predicts FUTURE PRICE LEVEL (not return).
+    // Ensemble: inverse-RMSE weighted average of top 3 predictions.
+    const currentPrice = latestRow.target;
+    let modelPredictedPrice: number;
+
     if (top3Models.length > 1) {
       const weights = top3Models.map((m) => m.result.rmse > 0 ? 1 / m.result.rmse : 1);
       const totalWeight = weights.reduce((s, w) => s + w, 0);
-      modelReturn = 0;
+      modelPredictedPrice = 0;
       for (let i = 0; i < top3Models.length; i++) {
         const pred = top3Models[i].model.predict(top3Models[i].result.state, latestFeatures);
-        modelReturn += (weights[i] / totalWeight) * pred.value;
+        modelPredictedPrice += (weights[i] / totalWeight) * pred.value;
       }
     } else {
       const inst = MODEL_REGISTRY.find((m) => m.meta.id === champion.model_id);
-      modelReturn = inst ? inst.predict(champion.state, latestFeatures).value : 0;
+      modelPredictedPrice = inst ? inst.predict(champion.state, latestFeatures).value : currentPrice;
     }
 
-    const currentPrice = latestRow.target;
+    // Sanity check: predicted price should be within ±15% of current
+    modelPredictedPrice = Math.max(currentPrice * 0.85, Math.min(currentPrice * 1.15, modelPredictedPrice));
+    const modelReturn = (modelPredictedPrice - currentPrice) / currentPrice;
 
     // === LAYER 2: LLM ADJUSTMENT ===
 
@@ -170,9 +176,12 @@ export async function GET(req: Request) {
       }
     }
 
-    // Combined forecast: quant model + LLM adjustment
-    const totalReturn = Math.max(-0.12, Math.min(0.12, modelReturn + llmAdjustment));
-    const predictedPrice = Math.round(currentPrice * (1 + totalReturn) * 10000) / 10000;
+    // Combined forecast: quant model price + LLM adjustment
+    const totalReturn = modelReturn + llmAdjustment;
+    const adjustedPrice = modelPredictedPrice * (1 + llmAdjustment);
+    const predictedPrice = Math.round(
+      Math.max(currentPrice * 0.85, Math.min(currentPrice * 1.15, adjustedPrice)) * 10000
+    ) / 10000;
 
     // CI from realized vol (market-consistent)
     const pricesRes = await fetch(new URL("/api/prices", req.url).toString()).catch(() => null);

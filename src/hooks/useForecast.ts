@@ -133,36 +133,11 @@ export function useForecast() {
         });
       }
 
-      // Compute blended forecast return.
-      // If model returns near-zero (naive or flat prediction), use any
-      // available signal — HF forecasts, or the 5d/63d horizons which
-      // might have more signal. A flat forecast is useless for procurement.
-      let finalReturn = localReturn;
-
-      // Blend with HF when local is flat and HF has a view
-      if (Math.abs(localReturn) < 0.003 && hfCount > 0) {
-        finalReturn = hfBlendReturn; // Use HF signal directly, not 50/50
-      }
-
-      // If still flat, check other horizons for any signal
-      if (Math.abs(finalReturn) < 0.003) {
-        const altForecast = data.forecasts.find(
-          (f) => Math.abs(f.predicted_return) > 0.003
-        );
-        if (altForecast) {
-          finalReturn = altForecast.predicted_return;
-        }
-      }
-
-      // Cap to realistic bounds (cotton rarely moves >12% in 21 days)
-      finalReturn = Math.max(-MAX_21D_RETURN, Math.min(MAX_21D_RETURN, finalReturn));
-
-      const endPrice = Math.round(startPrice * (1 + finalReturn) * 10000) / 10000;
-      // CI based on model RMSE (wider = more honest)
-      const rmse = data.model.test_rmse || 0.05;
-      const ciWidth = rmse * 1.96;
-      const endLower = Math.round(startPrice * (1 + finalReturn - ciWidth) * 10000) / 10000;
-      const endUpper = Math.round(startPrice * (1 + finalReturn + ciWidth) * 10000) / 10000;
+      // Use predicted price directly from API (model predicts price level, not return)
+      const endPrice = primary.predicted_price;
+      const endLower = primary.lower_price;
+      const endUpper = primary.upper_price;
+      const finalReturn = (endPrice - startPrice) / startPrice;
 
       // Use slight curve (ease-out) instead of linear interpolation
       // This looks more natural — fast initial move, then flattening
@@ -190,7 +165,7 @@ export function useForecast() {
       setAttribution({
         sources,
         model_name: data.model.name,
-        model_accuracy: `RMSE: ${(rmse * 100).toFixed(2)}%, Direction: ${(data.model.direction_accuracy * 100).toFixed(0)}%`,
+        model_accuracy: `RMSE: ${((data.model.test_rmse || 0.05) * 100).toFixed(2)}%, Direction: ${(data.model.direction_accuracy * 100).toFixed(0)}%`,
         top_features: (data.top_drivers ?? []).slice(0, 6).map((d) => d.feature.replace(/_/g, " ")),
       });
 

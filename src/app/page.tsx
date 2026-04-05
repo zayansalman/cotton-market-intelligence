@@ -2,44 +2,24 @@
 
 import { useMemo, useState } from "react";
 import { useMarketData } from "@/hooks/useMarketData";
-import { useLandedCost } from "@/hooks/useLandedCost";
 import { useStrategy } from "@/hooks/useStrategy";
 import { usePurchaserInput } from "@/hooks/usePurchaserInput";
 import PriceChart from "@/components/PriceChart";
-import LandedCostCard from "@/components/LandedCostCard";
 import MarketMetrics from "@/components/MarketMetrics";
 import StrategyResults from "@/components/StrategyResults";
 import BasicBrief from "@/components/procurement/BasicBrief";
 import AdvancedBrief from "@/components/procurement/AdvancedBrief";
 import PresetSelector from "@/components/procurement/PresetSelector";
 import InputBriefSummary from "@/components/procurement/InputBriefSummary";
-import ScenarioManager from "@/components/scenarios/ScenarioManager";
-import ScenarioCompare from "@/components/scenarios/ScenarioCompare";
-import BacktestPanel from "@/components/BacktestPanel";
-import PortfolioDashboard from "@/components/portfolio/PortfolioDashboard";
-import AlertManager from "@/components/AlertManager";
-import ForecastOverlay from "@/components/ForecastOverlay";
-import { useScenarios } from "@/hooks/useScenarios";
-import { getScenario } from "@/lib/scenarios/store";
+import DocumentationPanel from "@/components/DocumentationPanel";
+import { useForecast } from "@/hooks/useForecast";
 
 export default function Home() {
   const { priceData, headlines, loading, error, setError } = useMarketData();
   const bm = priceData?.benchmarks;
 
   const {
-    landedCost,
-    landedCostLoading,
-    basisCentsLb,
-    setBasisCentsLb,
-    freightUsdT,
-    setFreightUsdT,
-    fxBdtUsd,
-    setFxBdtUsd,
-  } = useLandedCost(bm);
-
-  const {
     input,
-    setInput,
     advancedMode,
     setAdvancedMode,
     validationErrors,
@@ -53,23 +33,12 @@ export default function Home() {
   const { strategy, generating, generateStrategy } = useStrategy({
     priceData,
     headlines,
-    landedCost,
+    landedCost: null,
     purchaserInput: input,
     setError,
   });
 
-  const {
-    scenarios,
-    save: saveScenario,
-    remove: removeScenario,
-    rename: renameScenarioFn,
-    duplicate: duplicateScenario,
-    doExport: exportScenario,
-    doImport: importScenario,
-    compareIds,
-    setCompareIds,
-  } = useScenarios();
-
+  const { forecast, attribution, backtestPredictions, forecastLoading, fetchForecast } = useForecast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [timeframe, setTimeframe] = useState<
     "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL"
@@ -118,14 +87,17 @@ export default function Home() {
               AI procurement advisor for spinning mills
             </p>
           </div>
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="md:hidden p-2 text-zinc-400 hover:text-white"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-2">
+            <DocumentationPanel />
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="md:hidden p-2 text-zinc-400 hover:text-white"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -150,7 +122,6 @@ export default function Home() {
               </button>
             </div>
 
-            {/* Core fields (always visible) */}
             <BasicBrief
               tonnes={input.demand.required_tonnes}
               months={input.demand.planning_horizon_months}
@@ -160,7 +131,6 @@ export default function Home() {
               }
             />
 
-            {/* Advanced mode */}
             {advancedMode && (
               <>
                 <PresetSelector onSelect={applyPreset} />
@@ -173,10 +143,8 @@ export default function Home() {
               </>
             )}
 
-            {/* Input brief summary */}
             <InputBriefSummary input={input} advancedMode={advancedMode} />
 
-            {/* Validation errors */}
             {validationErrors.length > 0 && (
               <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-2">
                 {validationErrors.map((e, i) => (
@@ -207,31 +175,6 @@ export default function Home() {
                 Data as of {bm.price_date}
               </p>
             )}
-
-            {/* Scenario manager */}
-            <div className="border-t border-zinc-800 pt-4">
-              <ScenarioManager
-                scenarios={scenarios}
-                canSave={!!strategy && !!bm}
-                onSave={() => {
-                  if (!strategy || !bm) return;
-                  const name = `${input.demand.required_tonnes.toLocaleString()}t / ${input.demand.planning_horizon_months}mo — ${strategy.signal}`;
-                  saveScenario(name, input, strategy, bm, headlines.length);
-                }}
-                onLoad={(s) => {
-                  setInput(structuredClone(s.inputs));
-                  if (s.inputs.timeline || s.inputs.quality || s.inputs.commercial || s.inputs.logistics || s.inputs.finance) {
-                    setAdvancedMode(true);
-                  }
-                }}
-                onDelete={removeScenario}
-                onRename={renameScenarioFn}
-                onDuplicate={duplicateScenario}
-                onExport={exportScenario}
-                onImport={importScenario}
-                onCompare={setCompareIds}
-              />
-            </div>
           </div>
         </aside>
 
@@ -245,20 +188,7 @@ export default function Home() {
 
           {bm && <MarketMetrics benchmarks={bm} />}
 
-          {bm && (
-            <LandedCostCard
-              data={landedCost}
-              loading={landedCostLoading}
-              basisCentsLb={basisCentsLb}
-              setBasisCentsLb={setBasisCentsLb}
-              freightUsdT={freightUsdT}
-              setFreightUsdT={setFreightUsdT}
-              fxBdtUsd={fxBdtUsd}
-              setFxBdtUsd={setFxBdtUsd}
-            />
-          )}
-
-          {/* Price chart */}
+          {/* THE CHART — price + MAs + forecast + backtest, all toggleable */}
           {priceData && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
@@ -286,27 +216,79 @@ export default function Home() {
                     {displayedPrices[displayedPrices.length - 1].date}
                   </span>
                 )}
+                <button
+                  onClick={fetchForecast}
+                  disabled={forecastLoading}
+                  className={`ml-auto px-3 py-1 text-xs rounded-md border transition-colors ${
+                    forecast
+                      ? "bg-purple-600/20 border-purple-500 text-purple-300"
+                      : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-zinc-200"
+                  } disabled:opacity-50`}
+                >
+                  {forecastLoading ? "Computing..." : forecast ? "Refresh Forecast" : "Show Forecast"}
+                </button>
               </div>
               <PriceChart
                 prices={displayedPrices}
                 benchmarks={priceData.benchmarks}
+                forecast={forecast}
+                backtestPredictions={backtestPredictions}
               />
+
+              {/* Forecast attribution — what drove the prediction */}
+              {attribution && (
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-zinc-400 uppercase">
+                      Forecast Attribution
+                    </h4>
+                    <span className="text-[10px] text-zinc-500">
+                      {attribution.model_accuracy}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {attribution.sources.map((src, i) => (
+                      <div key={i} className="flex items-start gap-3 text-xs">
+                        <span className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${
+                          src.direction === "up" ? "bg-green-400" :
+                          src.direction === "down" ? "bg-red-400" : "bg-zinc-500"
+                        }`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-zinc-200 font-medium">{src.name}</span>
+                            <span className="text-zinc-600">{src.weight}</span>
+                            <span className={`font-semibold ${
+                              src.direction === "up" ? "text-green-400" :
+                              src.direction === "down" ? "text-red-400" : "text-zinc-400"
+                            }`}>
+                              {src.direction === "up" ? "BULLISH" : src.direction === "down" ? "BEARISH" : "NEUTRAL"}
+                            </span>
+                          </div>
+                          <p className="text-zinc-500 mt-0.5 truncate">{src.detail}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {attribution.top_features.length > 0 && (
+                    <div>
+                      <p className="text-[10px] text-zinc-500 mb-1">Top model features:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {attribution.top_features.map((f, i) => (
+                          <span key={i} className="text-[10px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded">
+                            {f}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
-          {/* Scenario comparison */}
-          {compareIds && (() => {
-            const a = getScenario(compareIds[0]);
-            const b = getScenario(compareIds[1]);
-            if (a && b) {
-              return (
-                <ScenarioCompare a={a} b={b} onClose={() => setCompareIds(null)} />
-              );
-            }
-            return null;
-          })()}
-
-          {/* Strategy results */}
+          {/* Strategy results + decision drivers */}
           {strategy ? (
             <StrategyResults
               strategy={strategy}
@@ -329,22 +311,6 @@ export default function Home() {
               </div>
             )
           )}
-
-          {/* Price forecast */}
-          <ForecastOverlay />
-
-          {/* Alerts */}
-          <AlertManager benchmarks={bm} strategy={strategy} />
-
-          {/* Multi-mill portfolio */}
-          <PortfolioDashboard
-            benchmarks={bm}
-            headlines={headlines}
-            landedCost={landedCost}
-          />
-
-          {/* Backtest panel */}
-          <BacktestPanel />
         </main>
       </div>
     </div>

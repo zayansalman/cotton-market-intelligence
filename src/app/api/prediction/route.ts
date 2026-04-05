@@ -48,6 +48,8 @@ interface PredictionResponse {
   sentiment: MarketSentiment | null;
   /** HF-powered AI forecasts (LLM + Chronos). */
   hf_forecasts: HFForecast[];
+  /** Walk-forward backtest results (when include_backtest=true). */
+  backtest_results: unknown;
 }
 
 interface ForecastEntry {
@@ -101,9 +103,51 @@ export async function GET(req: Request) {
       );
     }
 
-    // Train and get champion
-    const trainResult = trainAndEvaluate(featureRows, horizon, 0.85);
-    const champion = trainResult.champion;
+    // --- Inject live sentiment into latest feature rows ---
+    // Compute sentiment BEFORE training so the model sees it as a real feature
+    let liveSentimentScore = 0;
+    try {
+      const headlinesForSentiment = await fetch(new URL("/api/headlines", req.url).toString());
+      if (headlinesForSentiment.ok) {
+        const hlData = await headlinesForSentiment.json();
+        const sentResult = await analyzeHeadlineSentiment(hlData).catch(() => null);
+        if (sentResult) {
+          liveSentimentScore = sentResult.aggregate_score;
+          // Inject sentiment into the last 21 rows (recent context window)
+          const injectWindow = Math.min(21, featureRows.length);
+          for (let i = featureRows.length - injectWindow; i < featureRows.length; i++) {
+            featureRows[i].features.sentiment_score = liveSentimentScore;
+          }
+        }
+      }
+    } catch { /* non-fatal — sentiment stays at 0 */ }
+
+    // Use walk-forward validation to select champion (more rigorous than single split)
+    const { compareModelsWalkForward } = await import("@/lib/models/walk-forward");
+    const { MODEL_REGISTRY } = await import("@/lib/models/trainer");
+    const wfResults = compareModelsWalkForward(MODEL_REGISTRY, featureRows, {
+      min_train_size: 200,
+      step_size: 21,
+      horizon,
+    });
+
+    // Champion: best composite score (RMSE + direction accuracy)
+    const wfScore = (m: { metrics: { rmse: number; direction_accuracy: number } }) =>
+      -m.metrics.rmse + 0.5 * m.metrics.direction_accuracy;
+    const sortedWf = [...wfResults].sort((a, b) => wfScore(b) - wfScore(a));
+    const championWf = sortedWf[0];
+
+    // Now train the champion model on ALL data for final prediction
+    const trainResult = trainAndEvaluate(featureRows, horizon, 0.999); // train on nearly all data
+    const championFromTrain = trainResult.results.find((r) => r.model_id === championWf.model_id)
+      ?? trainResult.results[0];
+
+    const champion = {
+      ...championFromTrain,
+      // Use walk-forward metrics (honest) not train-set metrics
+      rmse: championWf.metrics.rmse,
+      direction_accuracy: championWf.metrics.direction_accuracy,
+    };
 
     // Get latest feature row for prediction
     const latestRow = featureRows[featureRows.length - 1];
@@ -114,7 +158,6 @@ export async function GET(req: Request) {
     });
 
     // Find the model instance and predict
-    const { MODEL_REGISTRY } = await import("@/lib/models/trainer");
     const modelInstance = MODEL_REGISTRY.find((m) => m.meta.id === champion.model_id);
     if (!modelInstance) {
       return applyRateLimitHeaders(
@@ -231,6 +274,23 @@ export async function GET(req: Request) {
       console.warn("[prediction] HF enhancement failed (non-fatal):", e);
     }
 
+    // --- Backtest results (optional) ---
+    const includeBacktest = searchParams.get("include_backtest") === "true";
+    let backtestResults = undefined;
+    if (includeBacktest) {
+      try {
+        const { compareModelsWalkForward } = await import("@/lib/models/walk-forward");
+        const { MODEL_REGISTRY } = await import("@/lib/models/trainer");
+        backtestResults = compareModelsWalkForward(MODEL_REGISTRY, featureRows, {
+          min_train_size: 200,
+          step_size: 21,
+          horizon,
+        });
+      } catch (e) {
+        console.warn("[prediction] Backtest computation failed (non-fatal):", e);
+      }
+    }
+
     const response: PredictionResponse = {
       version: 2,
       generated_at: new Date().toISOString(),
@@ -247,6 +307,7 @@ export async function GET(req: Request) {
       top_drivers: topDrivers,
       sentiment,
       hf_forecasts: hfForecasts,
+      backtest_results: backtestResults ?? null,
     };
 
     return applyRateLimitHeaders(NextResponse.json(response), rateLimit.headers);

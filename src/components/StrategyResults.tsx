@@ -2,6 +2,7 @@
 
 import type { Strategy, Headline, Benchmarks, PurchaserInput } from "@/lib/types";
 import SignalBadge from "./SignalBadge";
+import ModelInfo from "./ModelInfo";
 import RoadmapChart from "./RoadmapChart";
 import MetricCard from "./MetricCard";
 import KDenseHandoff from "./KDenseHandoff";
@@ -26,6 +27,8 @@ export default function StrategyResults({
   return (
     <>
       <SignalBadge strategy={strategy} />
+
+      <ModelInfo provider={strategy.provider} source={strategy.source} />
 
       {/* Market analysis */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
@@ -158,6 +161,47 @@ export default function StrategyResults({
           </div>
         </div>
       </div>
+
+      {/* Decision drivers */}
+      {/* News override banner */}
+      {(strategy as unknown as Record<string, unknown>).news_override && (
+        <div className="mt-4 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+          <p className="text-xs font-semibold text-amber-300 uppercase">
+            News Context Override Active
+          </p>
+          <p className="text-xs text-amber-200/80 mt-1">
+            Forward-looking news analysis has overridden the statistical signal.
+            The LLM identified geopolitical, supply, or demand events that change
+            the price outlook beyond what historical statistics indicate.
+          </p>
+        </div>
+      )}
+
+      {(strategy as unknown as Record<string, unknown>).decision_drivers && (
+        <div className="mt-6">
+          <h4 className="text-sm font-semibold text-zinc-300 mb-3">Decision Drivers</h4>
+          <div className="space-y-2">
+            {((strategy as unknown as Record<string, unknown>).decision_drivers as Array<{
+              source: string; weight: number; direction: string; magnitude: number; reasoning: string;
+            }>).map((driver, i) => (
+              <div key={i} className="bg-zinc-700/30 border border-zinc-700 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-zinc-200">{driver.source}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500">{(driver.weight * 100).toFixed(0)}% weight</span>
+                    <span className={`text-xs font-semibold ${
+                      driver.direction === "up" ? "text-green-400" : driver.direction === "down" ? "text-red-400" : "text-zinc-400"
+                    }`}>
+                      {driver.direction === "up" ? "\u2191" : driver.direction === "down" ? "\u2193" : "\u2192"} {driver.direction.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-xs text-zinc-400 mt-1">{driver.reasoning}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Risks & Actions */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -15,6 +15,10 @@ import { parseStrategyRequest } from "@/lib/schemas/strategy-request";
 import { safeParseBody, safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
 import { checkAiQuota, recordAiUsage } from "@/lib/usage-quota";
 import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
+import { computeUnifiedSignal } from "@/lib/engine/unified-signal";
+import type { UnifiedSignal } from "@/lib/engine/unified-signal";
+import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
+import { analyzeNewsForStrategy } from "@/lib/hf/news-analysis";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -56,7 +60,7 @@ interface StrategyRequest {
   landedCost?: LandedCostResponse | null;
 }
 
-type StrategyProvider = "huggingface" | "openai" | "heuristic";
+type StrategyProvider = "huggingface" | "heuristic";
 
 function heuristicStrategy(
   bm: Benchmarks,
@@ -231,108 +235,33 @@ function resolveProvider(): StrategyProvider {
     .toLowerCase()
     .trim();
   const hasHf = Boolean(process.env.HF_TOKEN);
-  const hasOpenAi = Boolean(process.env.OPENAI_API_KEY);
-  const allowOpenAiFallback = process.env.ALLOW_OPENAI_FALLBACK === "1";
 
   if (explicit === "huggingface") return hasHf ? "huggingface" : "heuristic";
-  if (explicit === "openai") return hasOpenAi ? "openai" : "heuristic";
   if (explicit === "heuristic") return "heuristic";
 
-  // Auto mode: HF-first, OpenAI only if explicitly allowed.
+  // Auto mode: HF if token present, else heuristic
   if (hasHf) return "huggingface";
-  if (hasOpenAi && allowOpenAiFallback) return "openai";
   return "heuristic";
-}
-
-async function runOpenAiStrategy(
-  userMsg: string,
-  apiKey: string
-): Promise<Strategy | null> {
-  const res = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    timeout: 30_000,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userMsg },
-      ],
-      temperature: 0.3,
-      response_format: { type: "json_object" },
-    }),
-  });
-
-  if (!res.ok) {
-    console.error("OpenAI error:", res.status, await res.text());
-    return null;
-  }
-
-  const data = await res.json();
-  const text = data?.choices?.[0]?.message?.content?.trim();
-  if (!text) return null;
-  const parsed = safeJsonParse(text);
-  if (!parsed) return null;
-  return {
-    ...(parsed as Omit<Strategy, "source" | "provider">),
-    source: "ai",
-    provider: "openai",
-  };
 }
 
 async function runHuggingFaceStrategy(
   userMsg: string,
-  token: string
+  _token: string
 ): Promise<Strategy | null> {
-  const model =
-    process.env.HF_STRATEGY_MODEL ?? "Qwen/Qwen2.5-7B-Instruct";
+  const { hfChatCompletion, parseJsonResponse } = await import("@/lib/hf/client");
 
-  const prompt =
-    `${SYSTEM_PROMPT}\n\n` +
-    "Return ONLY valid JSON.\n\n" +
-    userMsg;
+  const text = await hfChatCompletion({
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userMsg },
+    ],
+    max_tokens: 900,
+    temperature: 0.2,
+  });
 
-  const res = await fetchWithTimeout(
-    `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`,
-    {
-      method: "POST",
-      timeout: 30_000,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: prompt,
-        parameters: {
-          max_new_tokens: 900,
-          temperature: 0.2,
-          return_full_text: false,
-        },
-        options: { wait_for_model: true },
-      }),
-    }
-  );
+  if (!text) return null;
 
-  if (!res.ok) {
-    console.error("HF error:", res.status, await res.text());
-    return null;
-  }
-
-  const data = await res.json();
-  let text = "";
-  if (Array.isArray(data) && data[0]?.generated_text) {
-    text = String(data[0].generated_text).trim();
-  } else if (data?.generated_text) {
-    text = String(data.generated_text).trim();
-  } else {
-    console.error("HF unexpected payload:", data);
-    return null;
-  }
-
-  const parsed = safeJsonParse(text);
+  const parsed = parseJsonResponse(text);
   if (!parsed) return null;
   return {
     ...(parsed as Omit<Strategy, "source" | "provider">),
@@ -376,6 +305,41 @@ export async function POST(req: Request) {
       landedCost
     );
     const provider = resolveProvider();
+
+    // --- Compute unified signal (non-blocking) ---
+    let unifiedSignal: UnifiedSignal | null = null;
+    try {
+      // Get heuristic baseline return
+      const heuristicBaseResult = heuristicStrategy(benchmarks, tonnage, months);
+      const heuristicReturn = heuristicBaseResult.signal === "STRONG_BUY" ? 0.03
+        : heuristicBaseResult.signal === "BUY" ? 0.015
+        : heuristicBaseResult.signal === "AVOID" ? -0.02
+        : 0;
+
+      // Run sentiment analysis and deep news analysis in parallel
+      const [sentimentResult, newsAnalysisResult] = await Promise.allSettled([
+        analyzeHeadlineSentiment(
+          headlines.map(h => ({ title: h.title, summary: h.summary ?? "" }))
+        ),
+        analyzeNewsForStrategy(headlines, benchmarks,  null),
+      ]);
+
+      const sentiment = sentimentResult.status === "fulfilled" ? sentimentResult.value : null;
+      const newsAnalysis = newsAnalysisResult.status === "fulfilled" ? newsAnalysisResult.value : null;
+
+      unifiedSignal = computeUnifiedSignal({
+        model_return: null,
+        model_confidence: null,
+        llm_return: null,
+        llm_confidence: null,
+        llm_reasoning: null,
+        heuristic_return: heuristicReturn,
+        heuristic_signal: heuristicBaseResult.signal,
+        sentiment_score: sentiment?.aggregate_score ?? null,
+        news_analysis: newsAnalysis,
+      });
+    } catch { /* non-fatal */ }
+
     const quota = checkAiQuota(req);
     const allHeaders = { ...rateLimit.headers, ...quota.headers };
 
@@ -398,16 +362,16 @@ export async function POST(req: Request) {
       }
     }
 
-    if (provider === "openai" && process.env.OPENAI_API_KEY) {
-      const strategy = await runOpenAiStrategy(userMsg, process.env.OPENAI_API_KEY);
-      if (strategy) {
-        recordAiUsage(req);
-        return applyRateLimitHeaders(NextResponse.json(strategy), allHeaders);
-      }
+    const heuristicResult = heuristicStrategy(benchmarks, tonnage, months, landedCost);
+    if (unifiedSignal) {
+      heuristicResult.signal = unifiedSignal.signal;
+      heuristicResult.confidence = Math.round(unifiedSignal.confidence * 100);
+      (heuristicResult as unknown as Record<string, unknown>).decision_drivers = unifiedSignal.decision_drivers;
+      (heuristicResult as unknown as Record<string, unknown>).predicted_return = unifiedSignal.predicted_return;
+      (heuristicResult as unknown as Record<string, unknown>).news_override = unifiedSignal.news_override;
     }
-
     return applyRateLimitHeaders(
-      NextResponse.json(heuristicStrategy(benchmarks, tonnage, months, landedCost)),
+      NextResponse.json(heuristicResult),
       allHeaders
     );
   } catch (e) {

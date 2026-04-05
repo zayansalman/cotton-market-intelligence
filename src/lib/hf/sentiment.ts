@@ -55,7 +55,7 @@ async function classifyBatch(
   token: string
 ): Promise<HFClassificationResult[][]> {
   const res = await fetchWithTimeout(
-    `https://api-inference.huggingface.co/models/${MODEL}`,
+    `https://router.huggingface.co/hf-inference/models/${MODEL}`,
     {
       method: "POST",
       timeout: 20_000,

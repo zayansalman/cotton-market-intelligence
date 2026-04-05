@@ -179,6 +179,32 @@ export const FEATURE_SPECS: FeatureSpec[] = [
   { name: "oil_ret_21d", group: "cross_market", description: "Crude oil 21-day return" },
   { name: "sp500_ret_21d", group: "cross_market", description: "S&P 500 21-day return" },
 
+  // Lagged cross-market
+  { name: "dxy_lag_5d", group: "cross_market", description: "DXY 5 days ago" },
+  { name: "dxy_lag_21d", group: "cross_market", description: "DXY 21 days ago" },
+  { name: "oil_lag_5d", group: "cross_market", description: "Crude oil 5 days ago" },
+  { name: "oil_lag_21d", group: "cross_market", description: "Crude oil 21 days ago" },
+  { name: "vix_lag_5d", group: "cross_market", description: "VIX 5 days ago" },
+  // Cross-commodity ratios
+  { name: "cotton_soybean_ratio", group: "cross_market", description: "Cotton / Soybean ratio" },
+  { name: "cotton_wheat_ratio", group: "cross_market", description: "Cotton / Wheat ratio" },
+  { name: "soybean_ret_21d", group: "cross_market", description: "Soybean 21-day return" },
+  { name: "cotton_corn_ratio", group: "cross_market", description: "Cotton / Corn ratio (acreage competition)" },
+  { name: "corn_ret_21d", group: "cross_market", description: "Corn 21-day return" },
+  // Input costs & supply chain
+  { name: "fertilizer_ret_21d", group: "cross_market", description: "Fertilizer proxy (MOS) 21-day return — input cost signal" },
+  { name: "diesel_ret_21d", group: "cross_market", description: "Diesel (ULSD) 21-day return — farm + logistics cost" },
+  { name: "container_freight_ret_21d", group: "cross_market", description: "Container freight (ZIM) 21-day return" },
+  { name: "cotton_fertilizer_ratio", group: "cross_market", description: "Cotton / fertilizer ratio — farmer profitability proxy" },
+  { name: "cotton_diesel_ratio", group: "cross_market", description: "Cotton / diesel ratio — operating margin proxy" },
+  // FX (producing + consuming countries)
+  { name: "inr_usd_ret_21d", group: "cross_market", description: "INR/USD 21-day return — India demand/supply signal" },
+  { name: "bdt_usd_ret_21d", group: "cross_market", description: "BDT/USD 21-day return — Bangladesh demand signal" },
+  // Polyester spread
+  { name: "cotton_polyester_spread", group: "cross_market", description: "Cotton price vs polyester cost proxy (cotton - oil*0.012)" },
+  // Sentiment
+  { name: "sentiment_score", group: "cross_market", description: "News sentiment aggregate score (-1 to +1)" },
+
   // Calendar/seasonal
   { name: "month", group: "calendar", description: "Month of year (1-12)" },
   { name: "quarter", group: "calendar", description: "Quarter (1-4)" },
@@ -207,6 +233,14 @@ export function buildFeatures(
   const oil = dates.map((d) => aligned[d]?.crude_oil ?? null);
   const vix = dates.map((d) => aligned[d]?.vix ?? null);
   const sp500 = dates.map((d) => aligned[d]?.sp500 ?? null);
+  const soybean = dates.map((d) => aligned[d]?.soybean ?? null);
+  const wheat = dates.map((d) => aligned[d]?.wheat ?? null);
+  const corn = dates.map((d) => aligned[d]?.corn ?? null);
+  const fertilizer = dates.map((d) => aligned[d]?.fertilizer_proxy ?? null);
+  const diesel = dates.map((d) => aligned[d]?.diesel ?? null);
+  const containerFreight = dates.map((d) => aligned[d]?.container_freight ?? null);
+  const inrUsd = dates.map((d) => aligned[d]?.inr_usd ?? null);
+  const bdtUsd = dates.map((d) => aligned[d]?.bdt_usd ?? null);
 
   // Precompute arrays
   const cottonRet5 = pctChange(cotton, 5);
@@ -234,6 +268,19 @@ export function buildFeatures(
   const dxyRet21 = pctChange(dxy, 21);
   const oilRet21 = pctChange(oil, 21);
   const sp500Ret21 = pctChange(sp500, 21);
+
+  const dxyLag5 = lag(dxy, 5);
+  const dxyLag21 = lag(dxy, 21);
+  const oilLag5 = lag(oil, 5);
+  const oilLag21 = lag(oil, 21);
+  const vixLag5 = lag(vix, 5);
+  const soybeanRet21 = pctChange(soybean, 21);
+  const cornRet21 = pctChange(corn, 21);
+  const fertilizerRet21 = pctChange(fertilizer, 21);
+  const dieselRet21 = pctChange(diesel, 21);
+  const containerFreightRet21 = pctChange(containerFreight, 21);
+  const inrRet21 = pctChange(inrUsd, 21);
+  const bdtRet21 = pctChange(bdtUsd, 21);
 
   // Forward returns (targets for supervised learning)
   const fwdRet5 = dates.map((_, i) => {
@@ -330,6 +377,38 @@ export function buildFeatures(
       vix_level: vix[i],
       oil_ret_21d: oilRet21[i],
       sp500_ret_21d: sp500Ret21[i],
+
+      // Lagged cross-market
+      dxy_lag_5d: dxyLag5[i],
+      dxy_lag_21d: dxyLag21[i],
+      oil_lag_5d: oilLag5[i],
+      oil_lag_21d: oilLag21[i],
+      vix_lag_5d: vixLag5[i],
+      cotton_soybean_ratio: cotton[i] != null && soybean[i] != null && soybean[i]! > 0
+        ? Math.round((cotton[i]! / soybean[i]!) * 100000) / 100000 : null,
+      cotton_wheat_ratio: cotton[i] != null && wheat[i] != null && wheat[i]! > 0
+        ? Math.round((cotton[i]! / wheat[i]!) * 100000) / 100000 : null,
+      soybean_ret_21d: soybeanRet21[i],
+      cotton_corn_ratio: cotton[i] != null && corn[i] != null && corn[i]! > 0
+        ? Math.round((cotton[i]! / corn[i]!) * 100000) / 100000 : null,
+      corn_ret_21d: cornRet21[i],
+
+      // Input costs & supply chain
+      fertilizer_ret_21d: fertilizerRet21[i],
+      diesel_ret_21d: dieselRet21[i],
+      container_freight_ret_21d: containerFreightRet21[i],
+      cotton_fertilizer_ratio: cotton[i] != null && fertilizer[i] != null && fertilizer[i]! > 0
+        ? Math.round((cotton[i]! / fertilizer[i]!) * 100000) / 100000 : null,
+      cotton_diesel_ratio: cotton[i] != null && diesel[i] != null && diesel[i]! > 0
+        ? Math.round((cotton[i]! / diesel[i]!) * 100000) / 100000 : null,
+      // FX
+      inr_usd_ret_21d: inrRet21[i],
+      bdt_usd_ret_21d: bdtRet21[i],
+      // Polyester spread: cotton $/lb vs polyester cost proxy (oil * 0.012 conversion)
+      cotton_polyester_spread: cotton[i] != null && oil[i] != null
+        ? Math.round((cotton[i]! - oil[i]! * 0.012) * 10000) / 10000 : null,
+
+      sentiment_score: 0, // default; overridden at prediction time when HF sentiment available
 
       // Calendar
       month: monthNum,

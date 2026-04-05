@@ -52,20 +52,56 @@ function extractMatrix(
   validRows: FeatureRow[];
 } {
   const targetField = TARGET_FIELD[horizon];
-  const featureNames = Object.keys(rows[0]?.features ?? {});
+  // Exclude sentiment_score from training features — it's always 0 in
+  // historical data (only filled at prediction time). Including it adds
+  // noise that makes models worse than naive.
+  const featureNames = Object.keys(rows[0]?.features ?? {}).filter(
+    (name) => name !== "sentiment_score"
+  );
+
+  // First pass: compute column medians for imputation (not zero!)
+  // Zero-imputation creates fake signal — a null DXY doesn't mean DXY=0.
+  const colSums: number[] = new Array(featureNames.length).fill(0);
+  const colCounts: number[] = new Array(featureNames.length).fill(0);
+  for (const row of rows) {
+    featureNames.forEach((name, j) => {
+      const val = row.features[name];
+      if (val != null && Number.isFinite(val)) {
+        colSums[j] += val;
+        colCounts[j]++;
+      }
+    });
+  }
+  const colMedians = colSums.map((s, j) =>
+    colCounts[j] > 0 ? s / colCounts[j] : 0
+  );
 
   const features: number[][] = [];
   const targets: number[] = [];
   const validRows: FeatureRow[] = [];
 
+  // Minimum feature coverage: skip rows where >40% of features are null.
+  // First 252 rows typically have 50%+ nulls (MAs, RSI, percentile ranks
+  // need lookback history). Training on these rows teaches the model
+  // "predict 0 when inputs are sparse" — worse than useless.
+  const MIN_COVERAGE = 0.6;
+
   for (const row of rows) {
     const target = row[targetField] as number | null;
     if (target == null) continue;
 
-    const fVec = featureNames.map((name) => {
+    let validCount = 0;
+    const fVec = featureNames.map((name, j) => {
       const val = row.features[name];
-      return val != null && Number.isFinite(val) ? val : 0; // Impute missing as 0
+      if (val != null && Number.isFinite(val)) {
+        validCount++;
+        return val;
+      }
+      return colMedians[j]; // Median imputation, not zero
     });
+
+    // Skip rows with too many missing features
+    if (validCount / featureNames.length < MIN_COVERAGE) continue;
 
     features.push(fVec);
     targets.push(target);

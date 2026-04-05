@@ -13,6 +13,7 @@ Production cotton procurement intelligence platform for South Asian spinning mil
 | [Architecture](Architecture.md) | System design, data flows, API layer, component tree, deployment |
 | [Technical Decisions](Technical-Decisions.md) | Every engineering trade-off with rationale and alternatives |
 | [Quant Rationale](Quant-Rationale.md) | Statistical and quantitative design decisions explained |
+| [Build Guide](Build-Guide.md) | Step-by-step how to build this for any commodity |
 
 ## Strategy and Procurement
 

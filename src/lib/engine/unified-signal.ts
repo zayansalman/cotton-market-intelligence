@@ -9,6 +9,7 @@
  */
 
 import type { Strategy } from "@/lib/types";
+import type { NewsAnalysis } from "@/lib/hf/news-analysis";
 
 export interface UnifiedSignal {
   /** Ensemble direction. */
@@ -17,6 +18,8 @@ export interface UnifiedSignal {
   predicted_return: number;
   /** Ensemble confidence (0-1). */
   confidence: number;
+  /** Whether news analysis overrode the statistical signal. */
+  news_override: boolean;
   /** What each source contributed. */
   decision_drivers: DecisionDriver[];
   /** Final signal mapped to strategy signal. */
@@ -51,6 +54,8 @@ interface SignalInput {
   heuristic_signal: Strategy["signal"];
   /** Sentiment score (-1 to +1). null if unavailable. */
   sentiment_score: number | null;
+  /** Deep LLM news analysis with forward-looking reasoning. null if unavailable. */
+  news_analysis: NewsAnalysis | null;
 }
 
 export function computeUnifiedSignal(input: SignalInput): UnifiedSignal {
@@ -114,6 +119,48 @@ export function computeUnifiedSignal(input: SignalInput): UnifiedSignal {
     totalWeight += WEIGHTS.sentiment;
   }
 
+  // News analysis — deep LLM reasoning about geopolitical/supply/demand context
+  // This has override power: if the LLM identifies a strong forward-looking
+  // reason that contradicts statistical signals, it can override them.
+  let newsOverride = false;
+  const newsAnalysis = input.news_analysis;
+
+  if (newsAnalysis) {
+    const newsDir = newsAnalysis.outlook === "bullish" ? "up"
+      : newsAnalysis.outlook === "bearish" ? "down" : "flat";
+
+    // News analysis gets 20% weight in the ensemble (taken from heuristic and sentiment)
+    const newsWeight = 0.20;
+    drivers.push({
+      source: "News Analysis (LLM)",
+      weight: newsWeight,
+      direction: newsDir as "up" | "down" | "flat",
+      magnitude: newsAnalysis.implied_return,
+      reasoning: newsAnalysis.reasoning
+        + (newsAnalysis.key_events.length > 0
+          ? ` Key events: ${newsAnalysis.key_events.map(e => e.event).join("; ")}`
+          : ""),
+    });
+    weightedReturn += newsWeight * newsAnalysis.implied_return;
+    totalWeight += newsWeight;
+
+    // OVERRIDE LOGIC: If LLM says news should override statistical signals
+    // and confidence is high enough, shift the ensemble strongly toward news view
+    if (newsAnalysis.override_statistical && newsAnalysis.confidence >= 0.6) {
+      newsOverride = true;
+      // Add extra weight to news direction (effectively 40% total news influence)
+      weightedReturn += 0.20 * newsAnalysis.implied_return;
+      totalWeight += 0.20;
+      drivers.push({
+        source: "News Override",
+        weight: 0.20,
+        direction: newsDir as "up" | "down" | "flat",
+        magnitude: newsAnalysis.implied_return,
+        reasoning: `Statistical signal overridden: ${newsAnalysis.override_reasoning}`,
+      });
+    }
+  }
+
   // Normalize
   const ensembleReturn = totalWeight > 0 ? weightedReturn / totalWeight : 0;
   const direction: UnifiedSignal["direction"] =
@@ -130,12 +177,18 @@ export function computeUnifiedSignal(input: SignalInput): UnifiedSignal {
   // Confidence from agreement of sources
   const directions = drivers.map((d) => d.direction);
   const agreement = directions.filter((d) => d === direction).length / directions.length;
-  const confidence = Math.min(0.95, agreement * 0.7 + 0.3);
+  let confidence = Math.min(0.95, agreement * 0.7 + 0.3);
+
+  // News override boosts or reduces confidence
+  if (newsOverride && newsAnalysis) {
+    confidence = Math.min(0.95, confidence + 0.1 * newsAnalysis.confidence);
+  }
 
   return {
     direction,
     predicted_return: Math.round(ensembleReturn * 100000) / 100000,
     confidence: Math.round(confidence * 100) / 100,
+    news_override: newsOverride,
     decision_drivers: drivers,
     signal,
   };

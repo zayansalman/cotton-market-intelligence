@@ -18,6 +18,7 @@ import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { computeUnifiedSignal } from "@/lib/engine/unified-signal";
 import type { UnifiedSignal } from "@/lib/engine/unified-signal";
 import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
+import { analyzeNewsForStrategy } from "@/lib/hf/news-analysis";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -390,20 +391,27 @@ export async function POST(req: Request) {
         : heuristicBaseResult.signal === "AVOID" ? -0.02
         : 0;
 
-      // Try sentiment analysis on headlines
-      const sentimentResult = await analyzeHeadlineSentiment(
-        headlines.map(h => ({ title: h.title, summary: h.summary ?? "" }))
-      ).catch(() => null);
+      // Run sentiment analysis and deep news analysis in parallel
+      const [sentimentResult, newsAnalysisResult] = await Promise.allSettled([
+        analyzeHeadlineSentiment(
+          headlines.map(h => ({ title: h.title, summary: h.summary ?? "" }))
+        ),
+        analyzeNewsForStrategy(headlines, benchmarks,  null),
+      ]);
+
+      const sentiment = sentimentResult.status === "fulfilled" ? sentimentResult.value : null;
+      const newsAnalysis = newsAnalysisResult.status === "fulfilled" ? newsAnalysisResult.value : null;
 
       unifiedSignal = computeUnifiedSignal({
-        model_return: null, // TODO: integrate prediction model when available in same request
+        model_return: null,
         model_confidence: null,
-        llm_return: null, // Filled by AI strategy if it runs
+        llm_return: null,
         llm_confidence: null,
         llm_reasoning: null,
         heuristic_return: heuristicReturn,
         heuristic_signal: heuristicBaseResult.signal,
-        sentiment_score: sentimentResult?.aggregate_score ?? null,
+        sentiment_score: sentiment?.aggregate_score ?? null,
+        news_analysis: newsAnalysis,
       });
     } catch { /* non-fatal */ }
 
@@ -443,6 +451,7 @@ export async function POST(req: Request) {
       heuristicResult.confidence = Math.round(unifiedSignal.confidence * 100);
       (heuristicResult as unknown as Record<string, unknown>).decision_drivers = unifiedSignal.decision_drivers;
       (heuristicResult as unknown as Record<string, unknown>).predicted_return = unifiedSignal.predicted_return;
+      (heuristicResult as unknown as Record<string, unknown>).news_override = unifiedSignal.news_override;
     }
     return applyRateLimitHeaders(
       NextResponse.json(heuristicResult),

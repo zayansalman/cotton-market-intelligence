@@ -160,6 +160,20 @@ export default function StrategyResults({
       </div>
 
       {/* Decision drivers */}
+      {/* News override banner */}
+      {(strategy as unknown as Record<string, unknown>).news_override && (
+        <div className="mt-4 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+          <p className="text-xs font-semibold text-amber-300 uppercase">
+            News Context Override Active
+          </p>
+          <p className="text-xs text-amber-200/80 mt-1">
+            Forward-looking news analysis has overridden the statistical signal.
+            The LLM identified geopolitical, supply, or demand events that change
+            the price outlook beyond what historical statistics indicate.
+          </p>
+        </div>
+      )}
+
       {(strategy as unknown as Record<string, unknown>).decision_drivers && (
         <div className="mt-6">
           <h4 className="text-sm font-semibold text-zinc-300 mb-3">Decision Drivers</h4>

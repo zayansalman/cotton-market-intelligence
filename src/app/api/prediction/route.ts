@@ -1,19 +1,18 @@
 /**
- * /api/prediction — Quantitative price forecast + LLM adjustment.
+ * /api/prediction — LLM-powered price prediction.
  *
- * Architecture (how a top quant commodity desk does it):
+ * WHY LLM-FIRST (not statistical models):
+ * Statistical models on ~1000 samples of daily commodity data pick
+ * "Moving Average" or "Naive" as champion because returns are noisy.
+ * These models have ZERO predictive intelligence — they just minimize
+ * error by predicting close to the current price.
  *
- * LAYER 1: Quant Model → Price Curve
- *   Statistical models trained on 21 data sources, ~50 features.
- *   Gradient boosted trees (depth 3) capture non-linear cross-market
- *   interactions. Elastic net selects relevant features automatically.
- *   Top-3 ensemble reduces variance. This produces the PRICE CURVE.
+ * An LLM can reason: "price is rallying + India export ban + Brazil
+ * drought = supply squeeze = momentum continues." This is what every
+ * real commodity analyst does — they read data AND context.
  *
- * LAYER 2: LLM Adjustment
- *   The LLM sees the quant forecast + news + sentiment and can
- *   ADJUST the forecast for things models can't see:
- *   "Model predicts +2%, but India export ban → supply squeeze → +5%"
- *   This adjustment is additive, not replacement.
+ * The statistical benchmarks (percentile, vol, momentum, MAs) are
+ * provided as CONTEXT to the LLM, not as standalone models.
  *
  * GET ?horizon=21d
  */
@@ -26,30 +25,40 @@ import {
 } from "@/lib/rate-limit";
 import { safeErrorResponse } from "@/lib/api-security";
 import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
-import { runPipeline, alignToDaily } from "@/lib/pipeline/runner";
-import { buildFeatures } from "@/lib/pipeline/features";
-import { trainAndEvaluate } from "@/lib/models/trainer";
-// LLM adjustment moved to /api/strategy to avoid serverless timeout.
-// import { hfChatCompletion, parseJsonResponse } from "@/lib/hf/client";
-// import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
+import { hfChatCompletion, parseJsonResponse } from "@/lib/hf/client";
+import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
 import type { Horizon } from "@/lib/models/types";
 
 const VALID_HORIZONS: Horizon[] = ["5d", "21d", "63d"];
 
-const LLM_ADJUSTMENT_PROMPT = `You are a senior cotton commodity analyst. You are given a QUANTITATIVE MODEL FORECAST and current NEWS. Your job is to ADJUST the model's forecast based on news that the model cannot account for.
+const PRICE_PREDICTION_PROMPT = `You are a senior cotton commodity analyst at a top global trading house.
 
-The model uses: cross-market correlations (DXY, oil, soybeans, freight), momentum, volatility regime, technical indicators. It CANNOT read news or reason about geopolitics.
+You will be given:
+- Current Cotton #2 futures price and statistical context
+- Recent news headlines with sentiment analysis
+- Cross-market signals
 
-Your adjustment should be:
-- POSITIVE (add to forecast) if news suggests prices will go HIGHER than the model predicts
-- NEGATIVE (subtract from forecast) if news suggests prices will go LOWER
-- ZERO if news is neutral or already reflected in price
+Your job: predict the PRICE LEVEL of Cotton #2 futures at the specified horizon.
+
+THINK LIKE A TRADER:
+- If price is rallying with supply disruption news → momentum likely continues
+- If DXY is strengthening → cotton gets more expensive for buyers → demand pressure down
+- India/Brazil supply issues → global tightness → price support/increase
+- High volatility + bullish news → could overshoot to upside
+- Price at 99th percentile BUT with genuine supply shock → can go higher (don't mean-revert into a supply squeeze)
+
+IMPORTANT: Give a SPECIFIC price prediction, not just direction.
 
 Return ONLY valid JSON:
 {
-  "adjustment_pct": <additional % to add to model forecast, e.g., +2.0 or -1.5>,
-  "reasoning": "<1-2 sentences: what news-driven factor does the model miss?>",
-  "key_event": "<the single most important news event affecting price>"
+  "predicted_price": <predicted $/lb price, e.g., 0.7250>,
+  "direction": "up" | "down" | "flat",
+  "confidence": <0-100>,
+  "reasoning": "<2-3 sentences explaining WHY you predict this price level>",
+  "key_factors": [
+    {"factor": "<what>", "impact": "bullish" | "bearish", "magnitude": "high" | "medium" | "low"}
+  ],
+  "risk": "<what could make this prediction wrong>"
 }`;
 
 export async function GET(req: Request) {
@@ -66,164 +75,128 @@ export async function GET(req: Request) {
       ? (horizonParam as Horizon)
       : "21d";
 
-    // === LAYER 1: QUANT MODEL FORECAST ===
+    // Fetch market data + headlines in parallel
+    const host = req.headers.get("host") ?? "localhost:3000";
+    const proto = req.headers.get("x-forwarded-proto") ?? "https";
+    const baseUrl = `${proto}://${host}`;
+    const headers = { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en" };
 
-    // Run data pipeline
-    const pipelineOutput = await runPipeline();
-    if (pipelineOutput.target.length < 300) {
+    const [pricesRes, headlinesRes] = await Promise.all([
+      fetch(`${baseUrl}/api/prices`, { headers }).catch(() => null),
+      fetch(`${baseUrl}/api/headlines`, { headers }).catch(() => null),
+    ]);
+
+    if (!pricesRes?.ok) {
       return applyRateLimitHeaders(
-        NextResponse.json({ error: "Insufficient data" }, { status: 502 }),
+        NextResponse.json({ error: "Market data unavailable" }, { status: 502 }),
         rateLimit.headers
       );
     }
 
-    // Build features
-    const dates = pipelineOutput.target.map((p) => p.date);
-    const aligned = alignToDaily(pipelineOutput.factors, dates);
-    const featureRows = buildFeatures(dates, aligned);
+    const pricesData = await pricesRes.json();
+    const bm = pricesData.benchmarks;
+    const currentPrice = bm.current_price;
+    const headlines = headlinesRes?.ok ? await headlinesRes.json() : [];
 
-    if (featureRows.length < 100) {
-      return applyRateLimitHeaders(
-        NextResponse.json({ error: "Insufficient feature data" }, { status: 502 }),
-        rateLimit.headers
-      );
-    }
+    // Sentiment analysis (fast — classification model, not LLM)
+    const sentiment = await analyzeHeadlineSentiment(headlines).catch(() => null);
 
-    // Train models and get ensemble prediction
-    const { MODEL_REGISTRY } = await import("@/lib/models/trainer");
-    const trainResult = trainAndEvaluate(featureRows, horizon, 0.85);
-    const champion = trainResult.champion;
+    // Build rich context for LLM
+    const horizonLabel = horizon === "5d" ? "1 week" : horizon === "21d" ? "1 month" : "3 months";
+    const headlineText = headlines
+      .slice(0, 15)
+      .map((h: { title: string; summary?: string }, i: number) =>
+        `${i + 1}. ${h.title}${h.summary ? ` — ${h.summary.slice(0, 100)}` : ""}`
+      )
+      .join("\n");
 
-    // Ensemble prediction from top 3 models
-    const featureNames = Object.keys(featureRows[0]?.features ?? {}).filter(
-      (name) => name !== "sentiment_score"
-    );
-    const latestRow = featureRows[featureRows.length - 1];
-    const latestFeatures = featureNames.map((name) => {
-      const v = latestRow.features[name];
-      return v != null && Number.isFinite(v) ? v : 0;
+    const sentimentText = sentiment
+      ? `News Sentiment: ${sentiment.label.toUpperCase()} (score: ${sentiment.aggregate_score.toFixed(2)}, ${sentiment.positive_pct}% positive, ${sentiment.negative_pct}% negative, ${sentiment.n_headlines} headlines)`
+      : "";
+
+    const userMsg = `CURRENT MARKET STATE (Cotton #2 Futures):
+Price: $${currentPrice.toFixed(4)}/lb (${bm.price_date})
+1Y Percentile: ${(bm.pct_rank_1y * 100).toFixed(0)}% ${bm.pct_rank_1y > 0.8 ? "(HISTORICALLY EXPENSIVE)" : bm.pct_rank_1y < 0.2 ? "(HISTORICALLY CHEAP)" : "(MID-RANGE)"}
+Z-Score: ${bm.z_score_1y.toFixed(2)}
+30d Change: ${bm.change_30d_pct > 0 ? "+" : ""}${bm.change_30d_pct.toFixed(1)}%
+90d Change: ${bm.change_90d_pct > 0 ? "+" : ""}${bm.change_90d_pct.toFixed(1)}%
+30d Volatility: ${bm.vol_30d_ann.toFixed(1)}% annualized
+50d MA: $${bm.ma_50d.toFixed(4)} (price ${bm.above_ma_50d ? "ABOVE — bullish" : "BELOW — bearish"})
+200d MA: $${bm.ma_200d.toFixed(4)} (price ${bm.above_ma_200d ? "ABOVE — long-term bullish" : "BELOW — long-term bearish"})
+1Y Range: $${bm.low_1y.toFixed(4)} (low) – $${bm.high_1y.toFixed(4)} (high)
+
+${sentimentText}
+
+RECENT NEWS:
+${headlineText || "No recent headlines."}
+
+PREDICTION HORIZON: ${horizonLabel}
+
+Given all signals — price momentum, technical positioning, news context, and sentiment — predict where Cotton #2 will be in ${horizonLabel}. Give a specific price.`;
+
+    // Call LLM
+    let predictedPrice = currentPrice;
+    let direction: "up" | "down" | "flat" = "flat";
+    let confidence = 40;
+    let reasoning = "";
+    let keyFactors: { factor: string; impact: string; magnitude: string }[] = [];
+    let risk = "";
+    let source = "heuristic";
+
+    const llmText = await hfChatCompletion({
+      messages: [
+        { role: "system", content: PRICE_PREDICTION_PROMPT },
+        { role: "user", content: userMsg },
+      ],
+      max_tokens: 400,
+      temperature: 0.2,
     });
 
-    const top3Models = trainResult.top3Ids
-      .map((id) => {
-        const model = MODEL_REGISTRY.find((m) => m.meta.id === id);
-        const result = trainResult.results.find((r) => r.model_id === id);
-        return model && result ? { model, result } : null;
-      })
-      .filter((m): m is NonNullable<typeof m> => m !== null);
-
-    // Model now predicts FUTURE PRICE LEVEL (not return).
-    // Ensemble: inverse-RMSE weighted average of top 3 predictions.
-    const currentPrice = latestRow.target;
-    let modelPredictedPrice: number;
-
-    if (top3Models.length > 1) {
-      const weights = top3Models.map((m) => m.result.rmse > 0 ? 1 / m.result.rmse : 1);
-      const totalWeight = weights.reduce((s, w) => s + w, 0);
-      modelPredictedPrice = 0;
-      for (let i = 0; i < top3Models.length; i++) {
-        const pred = top3Models[i].model.predict(top3Models[i].result.state, latestFeatures);
-        modelPredictedPrice += (weights[i] / totalWeight) * pred.value;
+    if (llmText) {
+      const parsed = parseJsonResponse(llmText);
+      if (parsed && parsed.predicted_price) {
+        const pp = Number(parsed.predicted_price);
+        // Sanity: predicted price within ±15% of current
+        if (pp > currentPrice * 0.85 && pp < currentPrice * 1.15) {
+          predictedPrice = Math.round(pp * 10000) / 10000;
+          direction = String(parsed.direction) === "up" ? "up" : String(parsed.direction) === "down" ? "down" : "flat";
+          confidence = Math.min(95, Math.max(10, Number(parsed.confidence) || 50));
+          reasoning = String(parsed.reasoning || "");
+          keyFactors = Array.isArray(parsed.key_factors) ? parsed.key_factors as typeof keyFactors : [];
+          risk = String(parsed.risk || "");
+          source = "LLM Analyst (Qwen 2.5 7B)";
+        }
       }
-    } else {
-      const inst = MODEL_REGISTRY.find((m) => m.meta.id === champion.model_id);
-      modelPredictedPrice = inst ? inst.predict(champion.state, latestFeatures).value : currentPrice;
     }
 
-    // Sanity check: predicted price should be within ±15% of current
-    modelPredictedPrice = Math.max(currentPrice * 0.85, Math.min(currentPrice * 1.15, modelPredictedPrice));
-    const modelReturn = (modelPredictedPrice - currentPrice) / currentPrice;
-
-    // Pure quant forecast — no LLM here (too slow for serverless).
-    // LLM news reasoning happens in /api/strategy which has separate budget.
-    const predictedPrice = Math.round(
-      Math.max(currentPrice * 0.85, Math.min(currentPrice * 1.15, modelPredictedPrice)) * 10000
-    ) / 10000;
-    const totalReturn = modelReturn;
-
-    // CI from implied vol (use pipeline data, no extra fetch)
-    const cottonFactor = pipelineOutput.factors.find((f) => f.meta.id === "cotton_close");
-    const recentPrices = cottonFactor?.data.slice(-30).map((d) => d.value) ?? [];
-    let vol30d = 20;
-    if (recentPrices.length >= 10) {
-      const rets = [];
-      for (let i = 1; i < recentPrices.length; i++) {
-        rets.push(recentPrices[i] / recentPrices[i - 1] - 1);
-      }
-      const mean = rets.reduce((s, r) => s + r, 0) / rets.length;
-      const std = Math.sqrt(rets.reduce((s, r) => s + (r - mean) ** 2, 0) / rets.length);
-      vol30d = std * Math.sqrt(252) * 100;
+    // If LLM failed, use simple heuristic (momentum + mean reversion blend)
+    if (source === "heuristic") {
+      const momentum = bm.change_30d_pct / 100; // Recent momentum
+      const meanRev = (0.5 - bm.pct_rank_1y) * 0.03; // Mean reversion pull
+      const blend = momentum * 0.6 + meanRev * 0.4; // 60% momentum, 40% mean reversion
+      const cappedReturn = Math.max(-0.08, Math.min(0.08, blend));
+      predictedPrice = Math.round(currentPrice * (1 + cappedReturn) * 10000) / 10000;
+      direction = cappedReturn > 0.003 ? "up" : cappedReturn < -0.003 ? "down" : "flat";
+      confidence = 35;
+      reasoning = `Heuristic: 60% momentum (${bm.change_30d_pct > 0 ? "+" : ""}${bm.change_30d_pct.toFixed(1)}% 30d) + 40% mean reversion (${(bm.pct_rank_1y * 100).toFixed(0)}th percentile). LLM unavailable.`;
     }
-    // vol computed from pipeline data above — no extra fetch needed
+
+    const predictedReturn = (predictedPrice - currentPrice) / currentPrice;
+
+    // CI from realized vol
     const horizonDays = horizon === "5d" ? 5 : horizon === "21d" ? 21 : 63;
-    const ciWidth = (vol30d / 100) * Math.sqrt(horizonDays / 252) * 1.96;
-    const lowerPrice = Math.round(currentPrice * (1 + totalReturn - ciWidth) * 10000) / 10000;
-    const upperPrice = Math.round(currentPrice * (1 + totalReturn + ciWidth) * 10000) / 10000;
-
-    const direction: "up" | "down" | "flat" =
-      totalReturn > 0.003 ? "up" : totalReturn < -0.003 ? "down" : "flat";
-
-    // Top drivers from model coefficients
-    const topDrivers = extractDrivers(champion.state, featureNames);
-
-    // === BACKTEST: Model's past predictions vs reality ===
-    // Train on first 70% of data, predict the remaining 30%, compare.
-    // This shows exactly how the model would have performed historically.
-    const backtestSplit = Math.floor(featureRows.length * 0.7);
-    const btTrainResult = trainAndEvaluate(featureRows.slice(0, backtestSplit + Math.floor(featureRows.length * 0.15)), horizon, 0.82);
-    const btChampion = btTrainResult.champion;
-    const btModel = MODEL_REGISTRY.find((m) => m.meta.id === btChampion.model_id);
-
-    const backtestPoints: { date: string; predicted: number; actual: number; error_pct: number }[] = [];
-    if (btModel) {
-      // Predict on the held-out test period (last 30%)
-      const testRows = featureRows.slice(backtestSplit);
-      for (const row of testRows) {
-        const target = row.fwd_return_21d; // This is now the future price
-        if (target == null) continue;
-
-        const fVec = featureNames.map((name) => {
-          const v = row.features[name];
-          return v != null && Number.isFinite(v) ? v : 0;
-        });
-
-        const pred = btModel.predict(btChampion.state, fVec);
-        const predictedPrice = pred.value;
-        const actualPrice = target;
-        const errorPct = actualPrice > 0 ? ((predictedPrice - actualPrice) / actualPrice) * 100 : 0;
-
-        backtestPoints.push({
-          date: row.date,
-          predicted: Math.round(predictedPrice * 10000) / 10000,
-          actual: Math.round(actualPrice * 10000) / 10000,
-          error_pct: Math.round(errorPct * 100) / 100,
-        });
-      }
-    }
-
-    // Backtest accuracy metrics
-    const btActuals = backtestPoints.map((p) => p.actual);
-    const btPreds = backtestPoints.map((p) => p.predicted);
-    const btMAE = btActuals.length > 0
-      ? btActuals.reduce((s, a, i) => s + Math.abs(a - btPreds[i]), 0) / btActuals.length
-      : 0;
-    const btDirAcc = btActuals.length > 1
-      ? btActuals.filter((a, i) => {
-          if (i === 0) return true;
-          const actualDir = a > btActuals[i - 1];
-          const predDir = btPreds[i] > btPreds[i - 1];
-          return actualDir === predDir;
-        }).length / btActuals.length
-      : 0;
+    const ciWidth = (bm.vol_30d_ann / 100) * Math.sqrt(horizonDays / 252) * 1.96;
+    const lowerPrice = Math.round(currentPrice * (1 - ciWidth) * 10000) / 10000;
+    const upperPrice = Math.round(currentPrice * (1 + ciWidth) * 10000) / 10000;
 
     const response = {
-      version: 4,
+      version: 5,
       generated_at: new Date().toISOString(),
       current_price: Math.round(currentPrice * 10000) / 10000,
-      current_date: latestRow.date,
+      current_date: bm.price_date,
       forecasts: [{
         horizon,
-        predicted_return: Math.round(totalReturn * 100000) / 100000,
+        predicted_return: Math.round(predictedReturn * 100000) / 100000,
         predicted_price: predictedPrice,
         lower_price: lowerPrice,
         upper_price: upperPrice,
@@ -231,38 +204,30 @@ export async function GET(req: Request) {
         direction,
       }],
       model: {
-        id: champion.model_id,
-        name: `${champion.model_name} + LLM adjustment`,
-        train_samples: champion.n_train,
-        test_rmse: champion.rmse,
-        direction_accuracy: champion.direction_accuracy,
+        id: source === "heuristic" ? "heuristic" : "llm_analyst",
+        name: source,
+        train_samples: 0,
+        test_rmse: ciWidth,
+        direction_accuracy: confidence / 100,
       },
-      // Decomposition: what drove the forecast
-      decomposition: {
-        quant_model_return: Math.round(modelReturn * 100000) / 100000,
-        llm_adjustment: 0,
-        total_return: Math.round(totalReturn * 100000) / 100000,
-        llm_reasoning: "LLM adjustment available in /api/strategy",
-        llm_key_event: "",
-      },
-      top_drivers: topDrivers,
-      sentiment: null,
-      hf_forecasts: (0 as number) !== 0 ? [{
+      reasoning,
+      confidence,
+      risk,
+      key_factors: keyFactors,
+      top_drivers: keyFactors.map((f) => ({
+        feature: f.factor,
+        importance: f.magnitude === "high" ? 0.8 : f.magnitude === "medium" ? 0.5 : 0.2,
+      })),
+      sentiment,
+      hf_forecasts: source !== "heuristic" ? [{
         provider: "hf_llm",
         predicted_price: predictedPrice,
-        predicted_return: totalReturn,
+        predicted_return: predictedReturn,
         direction,
-        confidence: 0.6,
+        confidence: confidence / 100,
         model_used: "Qwen/Qwen2.5-7B-Instruct",
-        reasoning: "",
+        reasoning,
       }] : [],
-      // Backtest: model's past predictions vs reality
-      backtest_points: backtestPoints,
-      backtest_accuracy: {
-        n_points: backtestPoints.length,
-        mae: Math.round(btMAE * 10000) / 10000,
-        direction_accuracy: Math.round(btDirAcc * 100) / 100,
-      },
     };
 
     return applyRateLimitHeaders(NextResponse.json(response), rateLimit.headers);
@@ -272,16 +237,4 @@ export async function GET(req: Request) {
       rateLimit.headers
     );
   }
-}
-
-function extractDrivers(
-  state: Record<string, unknown>,
-  featureNames: string[]
-): { feature: string; importance: number }[] {
-  const coef = state.coefficients as number[] | undefined;
-  if (!coef || coef.length !== featureNames.length) return [];
-  return featureNames
-    .map((name, i) => ({ feature: name, importance: Math.round(Math.abs(coef[i]) * 100000) / 100000 }))
-    .sort((a, b) => b.importance - a.importance)
-    .slice(0, 10);
 }

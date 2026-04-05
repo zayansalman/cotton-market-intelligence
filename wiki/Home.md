@@ -31,6 +31,12 @@ Production cotton procurement intelligence platform for South Asian spinning mil
 | [V3 Predictor Universe](V3-Predictor-Universe.md) | 60+ candidate predictors across 8 factor groups |
 | [V3 Data Dictionary](V3-Data-Dictionary.md) | Factor registry: IDs, frequencies, lags, sources, directions |
 
+## Compliance
+
+| Document | Description |
+|----------|-------------|
+| [Regulatory Compliance](Regulatory-Compliance.md) | EU AI Act, MiFID II, FCA, BaFin assessment and disclaimers |
+
 ## Operations
 
 | Document | Description |

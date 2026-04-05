@@ -342,6 +342,16 @@ export default function Home() {
               </div>
             )
           )}
+
+          {/* Regulatory disclaimers */}
+          <div className="border-t border-zinc-800 pt-4 mt-6 space-y-2">
+            <p className="text-[10px] text-zinc-600 leading-relaxed">
+              This tool provides AI-generated market analysis and procurement recommendations using Qwen 2.5 7B (via Hugging Face Pro). It is not investment advice. All recommendations should be validated by qualified professionals before execution. Predictions are based on statistical analysis of market data (Yahoo Finance, FRED) and NLP analysis of public news feeds. Models can be wrong — past performance does not guarantee future results. Cotton Market Intelligence provides analytical support for procurement decisions and does not guarantee any specific price outcome.
+            </p>
+            <p className="text-[10px] text-zinc-700">
+              Data: Yahoo Finance (delayed) | News: RSS (CottonGrower, TextileWorld, USDA, Reuters, ICAC, Fibre2Fashion) | Sentiment: HF DistilRoBERTa | Strategy: HF Qwen 2.5 7B | EU AI Act: limited-risk system, transparency obligations met
+            </p>
+          </div>
         </main>
       </div>
     </div>

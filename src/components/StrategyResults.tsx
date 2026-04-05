@@ -2,6 +2,7 @@
 
 import type { Strategy, Headline, Benchmarks, PurchaserInput } from "@/lib/types";
 import SignalBadge from "./SignalBadge";
+import ModelInfo from "./ModelInfo";
 import RoadmapChart from "./RoadmapChart";
 import MetricCard from "./MetricCard";
 import KDenseHandoff from "./KDenseHandoff";
@@ -26,6 +27,8 @@ export default function StrategyResults({
   return (
     <>
       <SignalBadge strategy={strategy} />
+
+      <ModelInfo provider={strategy.provider} source={strategy.source} />
 
       {/* Market analysis */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">

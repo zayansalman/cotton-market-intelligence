@@ -60,7 +60,7 @@ interface StrategyRequest {
   landedCost?: LandedCostResponse | null;
 }
 
-type StrategyProvider = "huggingface" | "openai" | "heuristic";
+type StrategyProvider = "huggingface" | "heuristic";
 
 function heuristicStrategy(
   bm: Benchmarks,
@@ -235,56 +235,13 @@ function resolveProvider(): StrategyProvider {
     .toLowerCase()
     .trim();
   const hasHf = Boolean(process.env.HF_TOKEN);
-  const hasOpenAi = Boolean(process.env.OPENAI_API_KEY);
-  const allowOpenAiFallback = process.env.ALLOW_OPENAI_FALLBACK === "1";
 
   if (explicit === "huggingface") return hasHf ? "huggingface" : "heuristic";
-  if (explicit === "openai") return hasOpenAi ? "openai" : "heuristic";
   if (explicit === "heuristic") return "heuristic";
 
-  // Auto mode: HF-first, OpenAI only if explicitly allowed.
+  // Auto mode: HF if token present, else heuristic
   if (hasHf) return "huggingface";
-  if (hasOpenAi && allowOpenAiFallback) return "openai";
   return "heuristic";
-}
-
-async function runOpenAiStrategy(
-  userMsg: string,
-  apiKey: string
-): Promise<Strategy | null> {
-  const res = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    timeout: 30_000,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userMsg },
-      ],
-      temperature: 0.3,
-      response_format: { type: "json_object" },
-    }),
-  });
-
-  if (!res.ok) {
-    console.error("OpenAI error:", res.status, await res.text());
-    return null;
-  }
-
-  const data = await res.json();
-  const text = data?.choices?.[0]?.message?.content?.trim();
-  if (!text) return null;
-  const parsed = safeJsonParse(text);
-  if (!parsed) return null;
-  return {
-    ...(parsed as Omit<Strategy, "source" | "provider">),
-    source: "ai",
-    provider: "openai",
-  };
 }
 
 async function runHuggingFaceStrategy(
@@ -399,14 +356,6 @@ export async function POST(req: Request) {
 
     if (provider === "huggingface" && process.env.HF_TOKEN) {
       const strategy = await runHuggingFaceStrategy(userMsg, process.env.HF_TOKEN);
-      if (strategy) {
-        recordAiUsage(req);
-        return applyRateLimitHeaders(NextResponse.json(strategy), allHeaders);
-      }
-    }
-
-    if (provider === "openai" && process.env.OPENAI_API_KEY) {
-      const strategy = await runOpenAiStrategy(userMsg, process.env.OPENAI_API_KEY);
       if (strategy) {
         recordAiUsage(req);
         return applyRateLimitHeaders(NextResponse.json(strategy), allHeaders);

@@ -17,6 +17,7 @@ import BacktestPanel from "@/components/BacktestPanel";
 import PredictionBacktest from "@/components/PredictionBacktest";
 import AlertManager from "@/components/AlertManager";
 import ForecastOverlay from "@/components/ForecastOverlay";
+import DocumentationPanel from "@/components/DocumentationPanel";
 import { useForecast } from "@/hooks/useForecast";
 import { useScenarios } from "@/hooks/useScenarios";
 import { getScenario } from "@/lib/scenarios/store";
@@ -107,14 +108,17 @@ export default function Home() {
               AI procurement advisor for spinning mills
             </p>
           </div>
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="md:hidden p-2 text-zinc-400 hover:text-white"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-2">
+            <DocumentationPanel />
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="md:hidden p-2 text-zinc-400 hover:text-white"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </div>
         </div>
       </header>
 

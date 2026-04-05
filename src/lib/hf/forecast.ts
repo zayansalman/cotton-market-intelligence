@@ -13,6 +13,7 @@
 import { fetchWithTimeout } from "@/lib/api-security";
 import type { Benchmarks, Headline } from "@/lib/types";
 import type { MarketSentiment } from "./sentiment";
+import { hfChatCompletion, parseJsonResponse } from "./client";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -52,8 +53,7 @@ export async function llmForecast(
   features: Record<string, number | null>,
   horizon: string
 ): Promise<HFForecast | null> {
-  const token = process.env.HF_TOKEN;
-  if (!token) return null;
+  if (!process.env.HF_TOKEN) return null;
 
   const model = process.env.HF_STRATEGY_MODEL ?? "Qwen/Qwen2.5-7B-Instruct";
 
@@ -82,47 +82,21 @@ FORECAST HORIZON: ${horizon}
 Analyze all signals and provide your ${horizon} cotton price forecast.`;
 
   try {
-    const res = await fetchWithTimeout(
-      `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`,
-      {
-        method: "POST",
-        timeout: 30_000,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          inputs: `${QUANT_SYSTEM_PROMPT}\n\n${userMsg}`,
-          parameters: {
-            max_new_tokens: 400,
-            temperature: 0.2,
-            return_full_text: false,
-          },
-          options: { wait_for_model: true },
-        }),
-      }
-    );
+    const text = await hfChatCompletion({
+      messages: [
+        { role: "system", content: QUANT_SYSTEM_PROMPT },
+        { role: "user", content: userMsg },
+      ],
+      max_tokens: 400,
+      temperature: 0.2,
+    });
 
-    if (!res.ok) {
-      console.error(`[hf-forecast] LLM error: ${res.status}`);
-      return null;
-    }
+    if (!text) return null;
 
-    const data = await res.json();
-    let text = "";
-    if (Array.isArray(data) && data[0]?.generated_text) {
-      text = String(data[0].generated_text).trim();
-    } else if (data?.generated_text) {
-      text = String(data.generated_text).trim();
-    } else {
-      return null;
-    }
+    const rawParsed = parseJsonResponse(text);
+    if (!rawParsed) return null;
 
-    // Parse JSON from response
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return null;
-
-    const parsed = JSON.parse(jsonMatch[0]) as {
+    const parsed = rawParsed as {
       direction: string;
       magnitude_pct: number;
       confidence: number;

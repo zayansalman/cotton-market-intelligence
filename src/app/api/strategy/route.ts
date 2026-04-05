@@ -289,54 +289,22 @@ async function runOpenAiStrategy(
 
 async function runHuggingFaceStrategy(
   userMsg: string,
-  token: string
+  _token: string
 ): Promise<Strategy | null> {
-  const model =
-    process.env.HF_STRATEGY_MODEL ?? "Qwen/Qwen2.5-7B-Instruct";
+  const { hfChatCompletion, parseJsonResponse } = await import("@/lib/hf/client");
 
-  const prompt =
-    `${SYSTEM_PROMPT}\n\n` +
-    "Return ONLY valid JSON.\n\n" +
-    userMsg;
+  const text = await hfChatCompletion({
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userMsg },
+    ],
+    max_tokens: 900,
+    temperature: 0.2,
+  });
 
-  const res = await fetchWithTimeout(
-    `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`,
-    {
-      method: "POST",
-      timeout: 30_000,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: prompt,
-        parameters: {
-          max_new_tokens: 900,
-          temperature: 0.2,
-          return_full_text: false,
-        },
-        options: { wait_for_model: true },
-      }),
-    }
-  );
+  if (!text) return null;
 
-  if (!res.ok) {
-    console.error("HF error:", res.status, await res.text());
-    return null;
-  }
-
-  const data = await res.json();
-  let text = "";
-  if (Array.isArray(data) && data[0]?.generated_text) {
-    text = String(data[0].generated_text).trim();
-  } else if (data?.generated_text) {
-    text = String(data.generated_text).trim();
-  } else {
-    console.error("HF unexpected payload:", data);
-    return null;
-  }
-
-  const parsed = safeJsonParse(text);
+  const parsed = parseJsonResponse(text);
   if (!parsed) return null;
   return {
     ...(parsed as Omit<Strategy, "source" | "provider">),

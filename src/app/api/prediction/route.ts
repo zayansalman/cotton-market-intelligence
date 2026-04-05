@@ -29,8 +29,9 @@ import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { runPipeline, alignToDaily } from "@/lib/pipeline/runner";
 import { buildFeatures } from "@/lib/pipeline/features";
 import { trainAndEvaluate } from "@/lib/models/trainer";
-import { hfChatCompletion, parseJsonResponse } from "@/lib/hf/client";
-import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
+// LLM adjustment moved to /api/strategy to avoid serverless timeout.
+// import { hfChatCompletion, parseJsonResponse } from "@/lib/hf/client";
+// import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
 import type { Horizon } from "@/lib/models/types";
 
 const VALID_HORIZONS: Horizon[] = ["5d", "21d", "63d"];
@@ -133,73 +134,27 @@ export async function GET(req: Request) {
     modelPredictedPrice = Math.max(currentPrice * 0.85, Math.min(currentPrice * 1.15, modelPredictedPrice));
     const modelReturn = (modelPredictedPrice - currentPrice) / currentPrice;
 
-    // === LAYER 2: LLM ADJUSTMENT ===
-
-    // Fetch headlines + sentiment
-    // Construct base URL from request headers (serverless functions don't have reliable req.url base)
-    const host = req.headers.get("host") ?? "localhost:3000";
-    const proto = req.headers.get("x-forwarded-proto") ?? "https";
-    const baseUrl = `${proto}://${host}`;
-    const headlinesRes = await fetch(`${baseUrl}/api/headlines`, {
-      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en" },
-    }).catch((e) => { console.error("[prediction] Headlines fetch failed:", e); return null; });
-    const headlines = headlinesRes?.ok ? await headlinesRes.json() : [];
-    console.info(`[prediction] Fetched ${headlines.length} headlines for LLM context`);
-    const sentiment = await analyzeHeadlineSentiment(headlines).catch(() => null);
-
-    let llmAdjustment = 0;
-    let llmReasoning = "";
-    let llmKeyEvent = "";
-
-    console.info(`[prediction] LLM adjustment: ${headlines.length} headlines, calling HF chat...`);
-    if (headlines.length > 0) {
-      const headlineText = headlines
-        .slice(0, 12)
-        .map((h: { title: string }, i: number) => `${i + 1}. ${h.title}`)
-        .join("\n");
-
-      const sentText = sentiment
-        ? `Sentiment: ${sentiment.label} (${sentiment.aggregate_score.toFixed(2)})`
-        : "";
-
-      const adjText = await hfChatCompletion({
-        messages: [
-          { role: "system", content: LLM_ADJUSTMENT_PROMPT },
-          {
-            role: "user",
-            content: `MODEL FORECAST: ${(modelReturn * 100).toFixed(2)}% over ${horizon}\nCurrent price: $${currentPrice.toFixed(4)}/lb\n${sentText}\n\nNEWS:\n${headlineText}`,
-          },
-        ],
-        max_tokens: 200,
-        temperature: 0.2,
-      });
-
-      if (adjText) {
-        const parsed = parseJsonResponse(adjText);
-        if (parsed) {
-          llmAdjustment = Math.max(-5, Math.min(5, Number(parsed.adjustment_pct) || 0)) / 100;
-          llmReasoning = String(parsed.reasoning || "");
-          llmKeyEvent = String(parsed.key_event || "");
-        }
-      }
-    }
-
-    // Combined forecast: quant model price + LLM adjustment
-    const totalReturn = modelReturn + llmAdjustment;
-    const adjustedPrice = modelPredictedPrice * (1 + llmAdjustment);
+    // Pure quant forecast — no LLM here (too slow for serverless).
+    // LLM news reasoning happens in /api/strategy which has separate budget.
     const predictedPrice = Math.round(
-      Math.max(currentPrice * 0.85, Math.min(currentPrice * 1.15, adjustedPrice)) * 10000
+      Math.max(currentPrice * 0.85, Math.min(currentPrice * 1.15, modelPredictedPrice)) * 10000
     ) / 10000;
+    const totalReturn = modelReturn;
 
-    // CI from realized vol (market-consistent)
-    const pricesRes = await fetch(`${baseUrl}/api/prices`, {
-      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en" },
-    }).catch(() => null);
-    let vol30d = 20; // default
-    if (pricesRes?.ok) {
-      const pd = await pricesRes.json();
-      vol30d = pd.benchmarks?.vol_30d_ann ?? 20;
+    // CI from implied vol (use pipeline data, no extra fetch)
+    const cottonFactor = pipelineOutput.factors.find((f) => f.meta.id === "cotton_close");
+    const recentPrices = cottonFactor?.data.slice(-30).map((d) => d.value) ?? [];
+    let vol30d = 20;
+    if (recentPrices.length >= 10) {
+      const rets = [];
+      for (let i = 1; i < recentPrices.length; i++) {
+        rets.push(recentPrices[i] / recentPrices[i - 1] - 1);
+      }
+      const mean = rets.reduce((s, r) => s + r, 0) / rets.length;
+      const std = Math.sqrt(rets.reduce((s, r) => s + (r - mean) ** 2, 0) / rets.length);
+      vol30d = std * Math.sqrt(252) * 100;
     }
+    // vol computed from pipeline data above — no extra fetch needed
     const horizonDays = horizon === "5d" ? 5 : horizon === "21d" ? 21 : 63;
     const ciWidth = (vol30d / 100) * Math.sqrt(horizonDays / 252) * 1.96;
     const lowerPrice = Math.round(currentPrice * (1 + totalReturn - ciWidth) * 10000) / 10000;
@@ -285,21 +240,21 @@ export async function GET(req: Request) {
       // Decomposition: what drove the forecast
       decomposition: {
         quant_model_return: Math.round(modelReturn * 100000) / 100000,
-        llm_adjustment: Math.round(llmAdjustment * 100000) / 100000,
+        llm_adjustment: 0,
         total_return: Math.round(totalReturn * 100000) / 100000,
-        llm_reasoning: llmReasoning,
-        llm_key_event: llmKeyEvent,
+        llm_reasoning: "LLM adjustment available in /api/strategy",
+        llm_key_event: "",
       },
       top_drivers: topDrivers,
-      sentiment,
-      hf_forecasts: llmAdjustment !== 0 ? [{
+      sentiment: null,
+      hf_forecasts: (0 as number) !== 0 ? [{
         provider: "hf_llm",
         predicted_price: predictedPrice,
         predicted_return: totalReturn,
         direction,
         confidence: 0.6,
         model_used: "Qwen/Qwen2.5-7B-Instruct",
-        reasoning: llmReasoning,
+        reasoning: "",
       }] : [],
     };
 

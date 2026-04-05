@@ -54,10 +54,36 @@ export interface ChatCompletionOptions {
 const DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct";
 
 /**
- * Provider routing order. HF Pro unlocks all providers.
- * We try multiple in case one is temporarily overloaded.
+ * Provider routing. Each provider has a different URL pattern.
+ * HF Pro token authenticates across all of them.
  */
-const PROVIDERS = ["novita", "hf-inference", "together"];
+const PROVIDERS: { name: string; urlFn: (model: string) => string }[] = [
+  {
+    // Together: model in body, not URL
+    name: "together",
+    urlFn: () => "https://router.huggingface.co/together/v1/chat/completions",
+  },
+  {
+    // Novita: model in body
+    name: "novita",
+    urlFn: () => "https://router.huggingface.co/novita/v1/chat/completions",
+  },
+  {
+    // Fireworks: model in body
+    name: "fireworks-ai",
+    urlFn: () => "https://router.huggingface.co/fireworks-ai/v1/chat/completions",
+  },
+  {
+    // Cerebras: model in body
+    name: "cerebras",
+    urlFn: () => "https://router.huggingface.co/cerebras/v1/chat/completions",
+  },
+  {
+    // Sambanova: model in body
+    name: "sambanova",
+    urlFn: () => "https://router.huggingface.co/sambanova/v1/chat/completions",
+  },
+];
 
 /** Current model info for transparency in UI. */
 export function getModelInfo(): {
@@ -93,7 +119,7 @@ export async function hfChatCompletion(
 
   for (const provider of PROVIDERS) {
     try {
-      const url = `https://router.huggingface.co/${provider}/models/${encodeURIComponent(model)}/v1/chat/completions`;
+      const url = provider.urlFn(model);
 
       const res = await fetchWithTimeout(url, {
         method: "POST",
@@ -115,17 +141,21 @@ export async function hfChatCompletion(
         const data = await res.json();
         const content = data?.choices?.[0]?.message?.content?.trim();
         if (content) {
-          console.info(`[hf-client] ${model} succeeded via ${provider}`);
+          console.info(`[hf-client] ${model} succeeded via ${provider.name}`);
           return content;
         }
       } else {
         const status = res.status;
-        console.warn(`[hf-client] ${provider}/${model} returned ${status}, trying next`);
-        if (status === 401 || status === 403) break;
+        const errBody = await res.text().catch(() => "");
+        console.warn(`[hf-client] ${provider.name}/${model} HTTP ${status}: ${errBody.slice(0, 150)}`);
+        if (status === 401 || status === 403) {
+          console.error(`[hf-client] Auth failed — token may be invalid. Stopping.`);
+          break;
+        }
         continue;
       }
     } catch (e) {
-      console.warn(`[hf-client] ${provider}/${model} failed:`, e);
+      console.warn(`[hf-client] ${provider.name}/${model} failed:`, e);
       continue;
     }
   }

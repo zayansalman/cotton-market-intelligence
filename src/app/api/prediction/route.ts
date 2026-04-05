@@ -201,6 +201,56 @@ export async function GET(req: Request) {
     // Top drivers from model coefficients
     const topDrivers = extractDrivers(champion.state, featureNames);
 
+    // === BACKTEST: Model's past predictions vs reality ===
+    // Train on first 70% of data, predict the remaining 30%, compare.
+    // This shows exactly how the model would have performed historically.
+    const backtestSplit = Math.floor(featureRows.length * 0.7);
+    const btTrainResult = trainAndEvaluate(featureRows.slice(0, backtestSplit + Math.floor(featureRows.length * 0.15)), horizon, 0.82);
+    const btChampion = btTrainResult.champion;
+    const btModel = MODEL_REGISTRY.find((m) => m.meta.id === btChampion.model_id);
+
+    const backtestPoints: { date: string; predicted: number; actual: number; error_pct: number }[] = [];
+    if (btModel) {
+      // Predict on the held-out test period (last 30%)
+      const testRows = featureRows.slice(backtestSplit);
+      for (const row of testRows) {
+        const target = row.fwd_return_21d; // This is now the future price
+        if (target == null) continue;
+
+        const fVec = featureNames.map((name) => {
+          const v = row.features[name];
+          return v != null && Number.isFinite(v) ? v : 0;
+        });
+
+        const pred = btModel.predict(btChampion.state, fVec);
+        const predictedPrice = pred.value;
+        const actualPrice = target;
+        const errorPct = actualPrice > 0 ? ((predictedPrice - actualPrice) / actualPrice) * 100 : 0;
+
+        backtestPoints.push({
+          date: row.date,
+          predicted: Math.round(predictedPrice * 10000) / 10000,
+          actual: Math.round(actualPrice * 10000) / 10000,
+          error_pct: Math.round(errorPct * 100) / 100,
+        });
+      }
+    }
+
+    // Backtest accuracy metrics
+    const btActuals = backtestPoints.map((p) => p.actual);
+    const btPreds = backtestPoints.map((p) => p.predicted);
+    const btMAE = btActuals.length > 0
+      ? btActuals.reduce((s, a, i) => s + Math.abs(a - btPreds[i]), 0) / btActuals.length
+      : 0;
+    const btDirAcc = btActuals.length > 1
+      ? btActuals.filter((a, i) => {
+          if (i === 0) return true;
+          const actualDir = a > btActuals[i - 1];
+          const predDir = btPreds[i] > btPreds[i - 1];
+          return actualDir === predDir;
+        }).length / btActuals.length
+      : 0;
+
     const response = {
       version: 4,
       generated_at: new Date().toISOString(),

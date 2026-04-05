@@ -256,6 +256,13 @@ export async function GET(req: Request) {
         model_used: "Qwen/Qwen2.5-7B-Instruct",
         reasoning: "",
       }] : [],
+      // Backtest: model's past predictions vs reality
+      backtest_points: backtestPoints,
+      backtest_accuracy: {
+        n_points: backtestPoints.length,
+        mae: Math.round(btMAE * 10000) / 10000,
+        direction_accuracy: Math.round(btDirAcc * 100) / 100,
+      },
     };
 
     return applyRateLimitHeaders(NextResponse.json(response), rateLimit.headers);

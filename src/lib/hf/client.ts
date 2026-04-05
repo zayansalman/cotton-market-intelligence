@@ -40,12 +40,29 @@ export interface ChatCompletionOptions {
 
 const DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct";
 
+/**
+ * Provider routing for chat models. The free hf-inference tier no longer
+ * serves large LLMs (July 2025 change). We try multiple providers in order:
+ * 1. novita (free tier available for some models)
+ * 2. hf-inference (legacy, works for small models)
+ * 3. together (if configured)
+ *
+ * This is the same pattern used by quant firms — multiple execution venues,
+ * failover on rejection, minimize single-provider dependency.
+ */
+const PROVIDERS = [
+  "novita",
+  "hf-inference",
+  "together",
+];
+
 /* ------------------------------------------------------------------ */
 /*  Chat completion call                                               */
 /* ------------------------------------------------------------------ */
 
 /**
  * Call HF Inference API using the new chat/completions endpoint.
+ * Tries multiple providers until one succeeds.
  * Returns the assistant's response text, or null on failure.
  */
 export async function hfChatCompletion(
@@ -59,10 +76,11 @@ export async function hfChatCompletion(
 
   const model = options.model ?? process.env.HF_STRATEGY_MODEL ?? DEFAULT_MODEL;
 
-  try {
-    const res = await fetchWithTimeout(
-      `https://router.huggingface.co/hf-inference/models/${encodeURIComponent(model)}/v1/chat/completions`,
-      {
+  for (const provider of PROVIDERS) {
+    try {
+      const url = `https://router.huggingface.co/${provider}/models/${encodeURIComponent(model)}/v1/chat/completions`;
+
+      const res = await fetchWithTimeout(url, {
         method: "POST",
         timeout: 45_000,
         headers: {
@@ -76,27 +94,30 @@ export async function hfChatCompletion(
           temperature: options.temperature ?? 0.2,
           ...(options.response_format ? { response_format: options.response_format } : {}),
         }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const content = data?.choices?.[0]?.message?.content?.trim();
+        if (content) {
+          console.info(`[hf-client] ${model} succeeded via ${provider}`);
+          return content;
+        }
+      } else {
+        const status = res.status;
+        console.warn(`[hf-client] ${provider}/${model} returned ${status}, trying next provider`);
+        // 401/403 = auth issue, don't try more providers
+        if (status === 401 || status === 403) break;
+        continue;
       }
-    );
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      console.error(`[hf-client] ${model} error ${res.status}: ${errText.slice(0, 200)}`);
-      return null;
+    } catch (e) {
+      console.warn(`[hf-client] ${provider}/${model} failed:`, e);
+      continue;
     }
-
-    const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content?.trim();
-    if (!content) {
-      console.error("[hf-client] No content in response:", JSON.stringify(data).slice(0, 200));
-      return null;
-    }
-
-    return content;
-  } catch (e) {
-    console.error("[hf-client] Chat completion failed:", e);
-    return null;
   }
+
+  console.error(`[hf-client] All providers exhausted for ${model}`);
+  return null;
 }
 
 /**

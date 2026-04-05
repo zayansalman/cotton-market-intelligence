@@ -59,7 +59,7 @@ export default function Home() {
     setCompareIds,
   } = useScenarios();
 
-  const { forecast, forecastLoading, fetchForecast } = useForecast();
+  const { forecast, attribution, forecastLoading, fetchForecast } = useForecast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [timeframe, setTimeframe] = useState<
     "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL"
@@ -283,6 +283,59 @@ export default function Home() {
                 benchmarks={priceData.benchmarks}
                 forecast={forecast}
               />
+
+              {/* Forecast attribution */}
+              {attribution && (
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-zinc-400 uppercase">
+                      Forecast Attribution
+                    </h4>
+                    <span className="text-[10px] text-zinc-500">
+                      {attribution.model_accuracy}
+                    </span>
+                  </div>
+
+                  {/* Source contributions */}
+                  <div className="space-y-2">
+                    {attribution.sources.map((src, i) => (
+                      <div key={i} className="flex items-start gap-3 text-xs">
+                        <span className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${
+                          src.direction === "up" ? "bg-green-400" :
+                          src.direction === "down" ? "bg-red-400" : "bg-zinc-500"
+                        }`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-zinc-200 font-medium">{src.name}</span>
+                            <span className="text-zinc-600">{src.weight}</span>
+                            <span className={`font-semibold ${
+                              src.direction === "up" ? "text-green-400" :
+                              src.direction === "down" ? "text-red-400" : "text-zinc-400"
+                            }`}>
+                              {src.direction === "up" ? "BULLISH" : src.direction === "down" ? "BEARISH" : "NEUTRAL"}
+                            </span>
+                          </div>
+                          <p className="text-zinc-500 mt-0.5 truncate">{src.detail}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Top features */}
+                  {attribution.top_features.length > 0 && (
+                    <div>
+                      <p className="text-[10px] text-zinc-500 mb-1">Top model features:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {attribution.top_features.map((f, i) => (
+                          <span key={i} className="text-[10px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded">
+                            {f}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

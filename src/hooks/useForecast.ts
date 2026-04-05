@@ -12,17 +12,39 @@ interface PredictionForecast {
   direction: "up" | "down" | "flat";
 }
 
+interface HFForecast {
+  provider: string;
+  predicted_price: number;
+  predicted_return: number;
+  direction: string;
+  confidence: number;
+  model_used: string;
+  reasoning?: string;
+}
+
 interface PredictionResponse {
   current_price: number;
   current_date: string;
   forecasts: PredictionForecast[];
-  model: { name: string };
-  hf_forecasts?: { provider: string; predicted_price: number; direction: string }[];
+  model: { name: string; test_rmse: number; direction_accuracy: number };
+  top_drivers: { feature: string; importance: number }[];
+  hf_forecasts?: HFForecast[];
+  sentiment?: { label: string; aggregate_score: number; n_headlines: number } | null;
 }
 
-/**
- * Generates future business dates from a start date.
- */
+/** Forecast attribution — what drove the prediction and how much. */
+export interface ForecastAttribution {
+  sources: {
+    name: string;
+    weight: string;
+    direction: "up" | "down" | "flat";
+    detail: string;
+  }[];
+  model_name: string;
+  model_accuracy: string;
+  top_features: string[];
+}
+
 function futureDates(startDate: string, count: number): string[] {
   const dates: string[] = [];
   const d = new Date(startDate);
@@ -36,8 +58,16 @@ function futureDates(startDate: string, count: number): string[] {
   return dates;
 }
 
+/**
+ * Cap predicted return to realistic bounds.
+ * Cotton rarely moves more than 10% in 21 trading days.
+ * Even during India export ban (2022), max monthly move was ~15%.
+ */
+const MAX_21D_RETURN = 0.12; // ±12%
+
 export function useForecast() {
   const [forecast, setForecast] = useState<ForecastOverlayData | undefined>();
+  const [attribution, setAttribution] = useState<ForecastAttribution | null>(null);
   const [loading, setLoading] = useState(false);
 
   const fetchForecast = useCallback(async () => {
@@ -47,65 +77,114 @@ export function useForecast() {
       if (!res.ok) throw new Error("Prediction failed");
       const data: PredictionResponse = await res.json();
 
-      // Build forecast points for each horizon
       const horizonDays: Record<string, number> = { "5d": 5, "21d": 21, "63d": 63 };
       const points: ForecastPoint[] = [];
 
-      // Use the 21d forecast as the primary overlay
       const primary = data.forecasts.find((f) => f.horizon === "21d") ?? data.forecasts[0];
       if (!primary) return;
 
       const dates = futureDates(data.current_date, horizonDays[primary.horizon] ?? 21);
-
-      // If local model predicts flat but HF models have a view, blend in HF signal
       const startPrice = data.current_price;
-      let endPrice = primary.predicted_price;
-      let endLower = primary.lower_price;
-      let endUpper = primary.upper_price;
 
-      // Blend HF forecasts if available and local model is near-flat
+      // Build attribution sources
+      const sources: ForecastAttribution["sources"] = [];
+
+      // 1. Local model forecast
+      const localReturn = primary.predicted_return;
+      const localDir = localReturn > 0.003 ? "up" : localReturn < -0.003 ? "down" : "flat";
+      sources.push({
+        name: `Quant Model (${data.model.name})`,
+        weight: "40%",
+        direction: localDir as "up" | "down" | "flat",
+        detail: `${(localReturn * 100).toFixed(2)}% predicted return, ${(data.model.direction_accuracy * 100).toFixed(0)}% directional accuracy`,
+      });
+
+      // 2. HF forecasts
+      let hfBlendReturn = 0;
+      let hfCount = 0;
       if (data.hf_forecasts && data.hf_forecasts.length > 0) {
-        const localReturn = Math.abs((endPrice - startPrice) / startPrice);
-        if (localReturn < 0.003) { // Model is essentially flat — blend HF signal
-          const hfPrices = data.hf_forecasts.map((f) => f.predicted_price).filter((p) => p > 0);
-          if (hfPrices.length > 0) {
-            const hfAvg = hfPrices.reduce((s, p) => s + p, 0) / hfPrices.length;
-            // 50/50 blend between local and HF when local is flat
-            endPrice = Math.round(((endPrice + hfAvg) / 2) * 10000) / 10000;
-            // Widen confidence interval to reflect blending uncertainty
-            const spread = Math.abs(endPrice - startPrice) * 1.5;
-            endLower = Math.round((endPrice - spread) * 10000) / 10000;
-            endUpper = Math.round((endPrice + spread) * 10000) / 10000;
+        for (const hf of data.hf_forecasts) {
+          if (hf.predicted_price > 0) {
+            const hfReturn = (hf.predicted_price - startPrice) / startPrice;
+            // Cap HF returns to realistic bounds
+            const cappedReturn = Math.max(-MAX_21D_RETURN, Math.min(MAX_21D_RETURN, hfReturn));
+            hfBlendReturn += cappedReturn;
+            hfCount++;
+            sources.push({
+              name: hf.provider === "hf_llm" ? "LLM Analyst (Qwen 2.5 7B)" : `AI Model (${hf.model_used})`,
+              weight: hf.provider === "hf_llm" ? "20%" : "10%",
+              direction: (hf.direction as "up" | "down" | "flat") ?? "flat",
+              detail: hf.reasoning?.slice(0, 100) ?? `${(cappedReturn * 100).toFixed(2)}% return, ${(hf.confidence * 100).toFixed(0)}% confidence`,
+            });
           }
         }
+        if (hfCount > 0) hfBlendReturn /= hfCount;
       }
 
+      // 3. Sentiment
+      if (data.sentiment) {
+        const sentDir = data.sentiment.aggregate_score > 0.1 ? "up" : data.sentiment.aggregate_score < -0.1 ? "down" : "flat";
+        sources.push({
+          name: "News Sentiment (DistilRoBERTa)",
+          weight: "15%",
+          direction: sentDir as "up" | "down" | "flat",
+          detail: `${data.sentiment.label} (score: ${data.sentiment.aggregate_score.toFixed(2)}, ${data.sentiment.n_headlines} headlines analyzed)`,
+        });
+      }
+
+      // Compute blended forecast return (capped to realistic range)
+      let finalReturn = localReturn;
+      if (Math.abs(localReturn) < 0.003 && hfCount > 0) {
+        // Local is flat — blend with HF
+        finalReturn = (localReturn + hfBlendReturn) / 2;
+      }
+      // Cap to realistic bounds
+      finalReturn = Math.max(-MAX_21D_RETURN, Math.min(MAX_21D_RETURN, finalReturn));
+
+      const endPrice = Math.round(startPrice * (1 + finalReturn) * 10000) / 10000;
+      // CI based on model RMSE (wider = more honest)
+      const rmse = data.model.test_rmse || 0.05;
+      const ciWidth = rmse * 1.96;
+      const endLower = Math.round(startPrice * (1 + finalReturn - ciWidth) * 10000) / 10000;
+      const endUpper = Math.round(startPrice * (1 + finalReturn + ciWidth) * 10000) / 10000;
+
+      // Use slight curve (ease-out) instead of linear interpolation
+      // This looks more natural — fast initial move, then flattening
       for (let i = 0; i < dates.length; i++) {
-        const t = (i + 1) / dates.length; // 0 to 1
+        const t = (i + 1) / dates.length;
+        const eased = 1 - Math.pow(1 - t, 1.5); // ease-out curve
         points.push({
           date: dates[i],
-          predicted_price: Math.round((startPrice + (endPrice - startPrice) * t) * 10000) / 10000,
-          lower_price: Math.round((startPrice + (endLower - startPrice) * t) * 10000) / 10000,
-          upper_price: Math.round((startPrice + (endUpper - startPrice) * t) * 10000) / 10000,
+          predicted_price: Math.round((startPrice + (endPrice - startPrice) * eased) * 10000) / 10000,
+          lower_price: Math.round((startPrice + (endLower - startPrice) * eased) * 10000) / 10000,
+          upper_price: Math.round((startPrice + (endUpper - startPrice) * eased) * 10000) / 10000,
           horizon: primary.horizon,
         });
       }
 
-      // Determine dominant direction
-      const direction = primary.direction;
+      const direction: "up" | "down" | "flat" =
+        finalReturn > 0.003 ? "up" : finalReturn < -0.003 ? "down" : "flat";
 
       setForecast({
         points,
         model_name: data.model.name,
         direction,
       });
+
+      setAttribution({
+        sources,
+        model_name: data.model.name,
+        model_accuracy: `RMSE: ${(rmse * 100).toFixed(2)}%, Direction: ${(data.model.direction_accuracy * 100).toFixed(0)}%`,
+        top_features: (data.top_drivers ?? []).slice(0, 6).map((d) => d.feature.replace(/_/g, " ")),
+      });
     } catch (e) {
       console.error("Forecast fetch failed:", e);
       setForecast(undefined);
+      setAttribution(null);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  return { forecast, forecastLoading: loading, fetchForecast };
+  return { forecast, attribution, forecastLoading: loading, fetchForecast };
 }

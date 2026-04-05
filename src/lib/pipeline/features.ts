@@ -282,18 +282,22 @@ export function buildFeatures(
   const inrRet21 = pctChange(inrUsd, 21);
   const bdtRet21 = pctChange(bdtUsd, 21);
 
-  // Forward returns (targets for supervised learning)
+  // Forward PRICE targets for supervised learning.
+  // We predict the actual future price level, not returns.
+  // Returns are tiny (~±2%) and indistinguishable from noise.
+  // Price levels give the model a meaningful target to predict
+  // and produce a usable price curve for the chart.
   const fwdRet5 = dates.map((_, i) => {
-    if (i + 5 >= dates.length || cotton[i] == null || cotton[i + 5] == null) return null;
-    return (cotton[i + 5]! - cotton[i]!) / cotton[i]!;
+    if (i + 5 >= dates.length || cotton[i + 5] == null) return null;
+    return cotton[i + 5]!; // Future PRICE, not return
   });
   const fwdRet21 = dates.map((_, i) => {
-    if (i + 21 >= dates.length || cotton[i] == null || cotton[i + 21] == null) return null;
-    return (cotton[i + 21]! - cotton[i]!) / cotton[i]!;
+    if (i + 21 >= dates.length || cotton[i + 21] == null) return null;
+    return cotton[i + 21]!;
   });
   const fwdRet63 = dates.map((_, i) => {
-    if (i + 63 >= dates.length || cotton[i] == null || cotton[i + 63] == null) return null;
-    return (cotton[i + 63]! - cotton[i]!) / cotton[i]!;
+    if (i + 63 >= dates.length || cotton[i + 63] == null) return null;
+    return cotton[i + 63]!;
   });
 
   const rows: FeatureRow[] = [];

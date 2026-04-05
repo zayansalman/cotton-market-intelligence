@@ -189,6 +189,6 @@ export const boostedTreesModel: ForecastModel = {
     for (const tree of trees) {
       pred += lr * predictTree(tree, features);
     }
-    return { value: Math.max(-0.5, Math.min(0.5, pred)) };
+    return { value: pred };
   },
 };

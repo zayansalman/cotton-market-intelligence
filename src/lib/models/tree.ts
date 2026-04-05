@@ -176,6 +176,6 @@ export const boostedStumpsModel: ForecastModel = {
       state as { stumps: Stump[]; intercept: number; learning_rate: number },
       features
     );
-    return { value: Math.max(-0.5, Math.min(0.5, value)) };
+    return { value };
   },
 };

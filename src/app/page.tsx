@@ -235,45 +235,76 @@ export default function Home() {
                 backtestPredictions={backtestPredictions}
               />
 
-              {/* Forecast attribution — what drove the prediction */}
+              {/* How we calculated this — full methodology breakdown */}
               {attribution && (
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-semibold text-zinc-400 uppercase">
-                      Forecast Attribution
+                    <h4 className="text-sm font-semibold text-zinc-200">
+                      How We Calculated This Prediction
                     </h4>
-                    <span className="text-[10px] text-zinc-500">
-                      {attribution.model_accuracy}
+                    <span className="text-xs text-zinc-500">
+                      {attribution.model_name} | {attribution.model_accuracy}
                     </span>
                   </div>
 
-                  <div className="space-y-2">
-                    {attribution.sources.map((src, i) => (
-                      <div key={i} className="flex items-start gap-3 text-xs">
-                        <span className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${
-                          src.direction === "up" ? "bg-green-400" :
-                          src.direction === "down" ? "bg-red-400" : "bg-zinc-500"
-                        }`} />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-zinc-200 font-medium">{src.name}</span>
-                            <span className="text-zinc-600">{src.weight}</span>
-                            <span className={`font-semibold ${
-                              src.direction === "up" ? "text-green-400" :
-                              src.direction === "down" ? "text-red-400" : "text-zinc-400"
-                            }`}>
-                              {src.direction === "up" ? "BULLISH" : src.direction === "down" ? "BEARISH" : "NEUTRAL"}
-                            </span>
-                          </div>
-                          <p className="text-zinc-500 mt-0.5 truncate">{src.detail}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {/* Reasoning summary */}
+                  {attribution.reasoning && (
+                    <p className="text-sm text-zinc-300 leading-relaxed">
+                      {attribution.reasoning}
+                    </p>
+                  )}
 
+                  {/* Methodology breakdown — signal by signal */}
+                  {attribution.methodology && (
+                    <div className="space-y-2">
+                      <h5 className="text-xs font-semibold text-zinc-400 uppercase">
+                        Signal-by-Signal Analysis
+                      </h5>
+                      {Object.entries(attribution.methodology).map(([category, data]) => {
+                        if (!data || typeof data !== "object") return null;
+                        const signal = String(data.signal ?? "neutral");
+                        const observation = String(data.observation ?? "");
+                        const weight = String(data.weight ?? "");
+                        if (!observation) return null;
+                        return (
+                          <div key={category} className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`w-2 h-2 rounded-full ${
+                                signal === "bullish" ? "bg-green-400" :
+                                signal === "bearish" ? "bg-red-400" : "bg-zinc-500"
+                              }`} />
+                              <span className="text-xs font-semibold text-zinc-200 uppercase">
+                                {category.replace(/_/g, " ")}
+                              </span>
+                              <span className={`text-[10px] font-semibold ${
+                                signal === "bullish" ? "text-green-400" :
+                                signal === "bearish" ? "text-red-400" : "text-zinc-500"
+                              }`}>
+                                {signal.toUpperCase()}
+                              </span>
+                              {weight && (
+                                <span className="text-[10px] text-zinc-600 ml-auto">{weight}</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-zinc-400">{observation}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Risk */}
+                  {attribution.risk && (
+                    <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-3">
+                      <span className="text-xs font-semibold text-red-400">Risk to forecast: </span>
+                      <span className="text-xs text-zinc-400">{attribution.risk}</span>
+                    </div>
+                  )}
+
+                  {/* Key factors */}
                   {attribution.top_features.length > 0 && (
                     <div>
-                      <p className="text-[10px] text-zinc-500 mb-1">Top model features:</p>
+                      <p className="text-[10px] text-zinc-500 mb-1">Key factors:</p>
                       <div className="flex flex-wrap gap-1">
                         {attribution.top_features.map((f, i) => (
                           <span key={i} className="text-[10px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded">

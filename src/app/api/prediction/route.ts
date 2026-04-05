@@ -69,34 +69,41 @@ async function fetchQuickQuote(ticker: string, label: string): Promise<QuickQuot
 
 const PRICE_PREDICTION_PROMPT = `You are a senior cotton commodity analyst at Glencore/Cargill/Louis Dreyfus.
 
-You have the FULL market picture:
-- Cotton #2 ICE futures data and statistical benchmarks
-- Cross-market signals: USD, oil, soybeans, wheat, corn, VIX, yields, freight, fertilizer, diesel
-- Producer/consumer FX rates: CNY, INR, BDT
-- News headlines with NLP sentiment
-- Your deep knowledge of cotton supply chains, seasonality, and geopolitics
+You have the FULL market picture — cotton data, cross-market signals, news, and sentiment. Your job: predict the price AND show your complete analytical work.
 
-REASONING FRAMEWORK (how top desks think):
-1. MOMENTUM: Is price trending? 30d/90d changes, position vs MAs. Trend continuation is the base case.
-2. SUPPLY: Soybeans/wheat/corn up = less cotton acreage (6-9mo lag). Fertilizer/diesel up = higher production costs = price floor. India/Brazil news = supply shocks.
-3. DEMAND: China PMI, DXY (inverse — strong USD = weak demand from non-USD buyers), consumer sentiment.
-4. SUBSTITUTION: Oil up = polyester more expensive = cotton demand up. Cotton/oil spread matters.
-5. RISK REGIME: VIX high = risk-off = commodities sell. VIX low = risk-on = supports commodities.
-6. NEWS: What does the news tell you about the NEXT 1-3 months, not just today?
-7. SEASONALITY: Northern hemisphere planting Mar-May, harvest Oct-Dec. Bangladesh peak procurement Aug-Dec.
+ANALYTICAL FRAMEWORK:
+1. MOMENTUM: 30d/90d changes, MAs. Trend continuation is the base case until broken.
+2. SUPPLY SIDE: Soybean/wheat/corn prices → acreage competition (6-9mo lag). Fertilizer/diesel → production cost floor. News about India/Brazil = supply shocks.
+3. DEMAND SIDE: DXY inverse (strong USD = weak non-USD buyer demand). S&P 500 = consumer confidence. China PMI = mill demand.
+4. SUBSTITUTION: Oil up → polyester expensive → cotton demand up. This is the oil-cotton substitution channel.
+5. RISK REGIME: VIX level. Low VIX = risk-on = supports commodities. High VIX = risk-off.
+6. FREIGHT/LOGISTICS: Container rates, diesel → CIF cost component. Directly adds to delivered cotton price.
+7. FX: CNY weakness = bad for cotton demand. INR/BDT weakness = bad for South Asian import demand.
+8. NEWS CATALYST: Forward-looking events that could move price in the next 1-3 months.
+9. SEASONALITY: Planting Mar-May, harvest Oct-Dec (Northern Hemisphere). Bangladesh peak buying Aug-Dec.
 
-GIVE A SPECIFIC PRICE PREDICTION with reasoning tied to these signals.
+CRITICAL: For EACH signal category, state what you observed and whether it's bullish, bearish, or neutral. SHOW YOUR WORK.
 
 Return ONLY valid JSON:
 {
   "predicted_price": <$/lb, e.g., 0.7250>,
   "direction": "up" | "down" | "flat",
   "confidence": <0-100>,
-  "reasoning": "<3-4 sentences explaining the key drivers of your price target>",
+  "methodology": {
+    "momentum": {"signal": "bullish" | "bearish" | "neutral", "observation": "<what you see>", "weight": "<how much this influenced your prediction>"},
+    "supply": {"signal": "bullish" | "bearish" | "neutral", "observation": "<acreage competition, input costs, supply news>", "weight": "<influence>"},
+    "demand": {"signal": "bullish" | "bearish" | "neutral", "observation": "<DXY, S&P, China PMI effects>", "weight": "<influence>"},
+    "substitution": {"signal": "bullish" | "bearish" | "neutral", "observation": "<oil-polyester channel>", "weight": "<influence>"},
+    "risk_regime": {"signal": "bullish" | "bearish" | "neutral", "observation": "<VIX, risk appetite>", "weight": "<influence>"},
+    "freight_fx": {"signal": "bullish" | "bearish" | "neutral", "observation": "<shipping costs, currency effects>", "weight": "<influence>"},
+    "news_catalyst": {"signal": "bullish" | "bearish" | "neutral", "observation": "<key events and their forward implications>", "weight": "<influence>"},
+    "seasonality": {"signal": "bullish" | "bearish" | "neutral", "observation": "<current seasonal context>", "weight": "<influence>"}
+  },
+  "reasoning": "<3-4 sentence summary tying it all together>",
   "key_factors": [
     {"factor": "<specific signal>", "impact": "bullish" | "bearish", "magnitude": "high" | "medium" | "low"}
   ],
-  "risk": "<1-2 sentences on what could invalidate this forecast>"
+  "risk": "<what could make this prediction wrong>"
 }`;
 
 /* ------------------------------------------------------------------ */
@@ -208,13 +215,14 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
     let keyFactors: { factor: string; impact: string; magnitude: string }[] = [];
     let risk = "";
     let source = "heuristic";
+    let methodology: Record<string, { signal: string; observation: string; weight: string }> | null = null;
 
     const llmText = await hfChatCompletion({
       messages: [
         { role: "system", content: PRICE_PREDICTION_PROMPT },
         { role: "user", content: userMsg },
       ],
-      max_tokens: 500,
+      max_tokens: 800,
       temperature: 0.2,
     });
 
@@ -230,6 +238,9 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
           keyFactors = Array.isArray(parsed.key_factors) ? parsed.key_factors as typeof keyFactors : [];
           risk = String(parsed.risk || "");
           source = "LLM Analyst (Qwen 2.5 7B)";
+          if (parsed.methodology && typeof parsed.methodology === "object") {
+            methodology = parsed.methodology as unknown as typeof methodology;
+          }
         }
       }
     }
@@ -273,6 +284,7 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
       reasoning,
       confidence,
       risk,
+      methodology,
       key_factors: keyFactors,
       top_drivers: keyFactors.map((f) => ({
         feature: f.factor,

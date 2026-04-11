@@ -24,6 +24,7 @@ import { safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
 import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { hfChatCompletion, parseJsonResponse } from "@/lib/hf/client";
 import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
+import { getSupabase, addBusinessDays } from "@/lib/supabase";
 import type { Horizon } from "@/lib/models/types";
 
 const VALID_HORIZONS: Horizon[] = ["5d", "21d", "63d"];
@@ -303,6 +304,34 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
         reasoning,
       }] : [],
     };
+
+    // Fire-and-forget: persist prediction to Supabase for accuracy tracking
+    const supabase = getSupabase();
+    if (supabase) {
+      const forecast = response.forecasts[0];
+      const targetDate = addBusinessDays(response.current_date, horizonDays);
+      Promise.resolve().then(async () => {
+        try {
+          await supabase.from("predictions").upsert(
+            {
+              current_date: response.current_date,
+              current_price: response.current_price,
+              horizon: forecast.horizon,
+              target_date: targetDate,
+              predicted_price: forecast.predicted_price,
+              lower_price: forecast.lower_price,
+              upper_price: forecast.upper_price,
+              direction: forecast.direction,
+              confidence: response.confidence,
+              model_id: response.model.id,
+              model_name: response.model.name,
+              reasoning: response.reasoning || null,
+            },
+            { onConflict: "current_date,horizon,model_id" }
+          );
+        } catch { /* Supabase write failure must never break predictions */ }
+      });
+    }
 
     return applyRateLimitHeaders(NextResponse.json(response), rateLimit.headers);
   } catch (e) {

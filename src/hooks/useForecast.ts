@@ -185,15 +185,20 @@ export function useForecast() {
         risk: data.risk ?? "",
       });
 
-      // Fetch strategy backtest for chart overlay (lightweight, no model walk-forward)
+      // Fetch strategy backtest + forecast history for chart overlay
       try {
-        const btRes = await fetch(
-          `/api/backtest?tonnage=2000&months=6&step_months=3`
-        );
-        if (btRes.ok) {
+        const [btRes, fhRes] = await Promise.all([
+          fetch(`/api/backtest?tonnage=2000&months=6&step_months=3`).catch(() => null),
+          fetch(`/api/forecast-history`).catch(() => null),
+        ]);
+
+        let allPoints: BacktestPrediction[] = [];
+
+        // Strategy backtest points
+        if (btRes?.ok) {
           const btData = await btRes.json();
           if (btData.steps) {
-            const btPoints: BacktestPrediction[] = btData.steps.map(
+            allPoints = btData.steps.map(
               (s: { decision_date: string; price_at_decision: number; weighted_exec_price: number; savings_pct: number }) => ({
                 date: s.decision_date,
                 predicted_price: s.weighted_exec_price,
@@ -201,10 +206,24 @@ export function useForecast() {
                 direction_correct: s.savings_pct > 0,
               })
             );
-            setBacktestPredictions(btPoints);
           }
         }
-      } catch { /* backtest overlay is non-fatal */ }
+
+        // Forecast vs reality points (from Supabase)
+        if (fhRes?.ok) {
+          const fhData = await fhRes.json();
+          if (fhData.predictions?.length) {
+            const existingDates = new Set(allPoints.map((p) => p.date));
+            for (const p of fhData.predictions as BacktestPrediction[]) {
+              if (!existingDates.has(p.date)) {
+                allPoints.push(p);
+              }
+            }
+          }
+        }
+
+        setBacktestPredictions(allPoints);
+      } catch { /* backtest/history overlay is non-fatal */ }
     } catch (e) {
       console.error("Forecast fetch failed:", e);
       setForecast(undefined);

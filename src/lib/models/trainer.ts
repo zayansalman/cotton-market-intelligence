@@ -50,6 +50,7 @@ function extractMatrix(
   targets: number[];
   featureNames: string[];
   validRows: FeatureRow[];
+  imputationValues: number[];
 } {
   const targetField = TARGET_FIELD[horizon];
   // Exclude sentiment_score from training features — it's always 0 in
@@ -59,7 +60,7 @@ function extractMatrix(
     (name) => name !== "sentiment_score"
   );
 
-  // First pass: compute column medians for imputation (not zero!)
+  // First pass: compute column means for imputation (not zero!)
   // Zero-imputation creates fake signal — a null DXY doesn't mean DXY=0.
   const colSums: number[] = new Array(featureNames.length).fill(0);
   const colCounts: number[] = new Array(featureNames.length).fill(0);
@@ -72,7 +73,7 @@ function extractMatrix(
       }
     });
   }
-  const colMedians = colSums.map((s, j) =>
+  const imputationValues = colSums.map((s, j) =>
     colCounts[j] > 0 ? s / colCounts[j] : 0
   );
 
@@ -97,7 +98,7 @@ function extractMatrix(
         validCount++;
         return val;
       }
-      return colMedians[j]; // Median imputation, not zero
+      return imputationValues[j]; // Mean imputation, not zero
     });
 
     // Skip rows with too many missing features
@@ -108,7 +109,7 @@ function extractMatrix(
     validRows.push(row);
   }
 
-  return { features, targets, featureNames, validRows };
+  return { features, targets, featureNames, validRows, imputationValues };
 }
 
 /* ------------------------------------------------------------------ */
@@ -131,10 +132,19 @@ function rmse(actual: number[], predicted: number[]): number {
   return Math.sqrt(sum / actual.length);
 }
 
-function directionAccuracy(actual: number[], predicted: number[]): number {
+function directionAccuracy(
+  actual: number[],
+  predicted: number[],
+  current: number[]
+): number {
   let correct = 0;
   for (let i = 0; i < actual.length; i++) {
-    if ((actual[i] >= 0 && predicted[i] >= 0) || (actual[i] < 0 && predicted[i] < 0)) {
+    const actualMove = actual[i] - current[i];
+    const predictedMove = predicted[i] - current[i];
+    if (
+      (actualMove >= 0 && predictedMove >= 0) ||
+      (actualMove < 0 && predictedMove < 0)
+    ) {
       correct++;
     }
   }
@@ -151,6 +161,8 @@ export interface TrainResult {
   champion: ModelResult;
   /** Top 3 model IDs for ensemble prediction. */
   top3Ids: string[];
+  featureNames: string[];
+  imputationValues: number[];
 }
 
 /**
@@ -165,13 +177,15 @@ export function trainAndEvaluate(
   horizon: Horizon,
   trainPct: number = 0.8
 ): TrainResult {
-  const { features, targets, featureNames } = extractMatrix(rows, horizon);
+  const { features, targets, featureNames, validRows, imputationValues } =
+    extractMatrix(rows, horizon);
 
   const splitIdx = Math.floor(features.length * trainPct);
   const trainX = features.slice(0, splitIdx);
   const trainY = targets.slice(0, splitIdx);
   const testX = features.slice(splitIdx);
   const testY = targets.slice(splitIdx);
+  const testCurrent = validRows.slice(splitIdx).map((row) => row.target);
 
   const results: ModelResult[] = [];
 
@@ -189,7 +203,7 @@ export function trainAndEvaluate(
       mae: Math.round(mae(testY, predictions) * 100000) / 100000,
       rmse: Math.round(rmse(testY, predictions) * 100000) / 100000,
       direction_accuracy:
-        Math.round(directionAccuracy(testY, predictions) * 10000) / 10000,
+        Math.round(directionAccuracy(testY, predictions, testCurrent) * 10000) / 10000,
       mean_pred: Math.round((predictions.reduce((s, v) => s + v, 0) / predictions.length) * 100000) / 100000,
       mean_actual: Math.round((testY.reduce((s, v) => s + v, 0) / testY.length) * 100000) / 100000,
       state,
@@ -235,7 +249,44 @@ export function trainAndEvaluate(
       : [naiveResult ?? results[0]]
   ).map((r) => r.model_id);
 
-  return { horizon, results, champion, top3Ids };
+  return { horizon, results, champion, top3Ids, featureNames, imputationValues };
+}
+
+export function buildInferenceVector(
+  row: FeatureRow,
+  featureNames: string[],
+  imputationValues: number[]
+): number[] {
+  return featureNames.map((name, idx) => {
+    const value = row.features[name];
+    return value != null && Number.isFinite(value)
+      ? value
+      : imputationValues[idx] ?? 0;
+  });
+}
+
+export function predictChampion(
+  result: TrainResult,
+  row: FeatureRow
+): { value: number; model_id: string; model_name: string } | null {
+  const model = MODEL_REGISTRY.find(
+    (candidate) => candidate.meta.id === result.champion.model_id
+  );
+  if (!model) return null;
+
+  const features = buildInferenceVector(
+    row,
+    result.featureNames,
+    result.imputationValues
+  );
+  const prediction = model.predict(result.champion.state, features);
+  if (!Number.isFinite(prediction.value)) return null;
+
+  return {
+    value: prediction.value,
+    model_id: result.champion.model_id,
+    model_name: result.champion.model_name,
+  };
 }
 
 /**

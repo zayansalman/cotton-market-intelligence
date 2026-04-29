@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { naiveModel, historicalMeanModel, seasonalNaiveModel } from "../baselines";
 import { linearModel } from "../linear";
 import { boostedStumpsModel } from "../tree";
-import { trainAndEvaluate, MODEL_REGISTRY } from "../trainer";
+import { trainAndEvaluate, MODEL_REGISTRY, predictChampion } from "../trainer";
 import { buildFeatures } from "../../pipeline/features";
 
 /* ------------------------------------------------------------------ */
@@ -134,6 +134,18 @@ describe("trainAndEvaluate", () => {
       result.champion.model_id === "naive" ||
       result.champion.rmse <= naive!.rmse
     ).toBe(true);
+  });
+
+  it("predicts the latest row using the champion model and stored feature order", () => {
+    const rows = syntheticFeatureRows(500);
+    const result = trainAndEvaluate(rows, "21d");
+    const latestRow = rows[rows.length - 1];
+
+    const prediction = predictChampion(result, latestRow);
+
+    expect(prediction).not.toBeNull();
+    expect(prediction?.model_id).toBe(result.champion.model_id);
+    expect(Number.isFinite(prediction?.value)).toBe(true);
   });
 });
 

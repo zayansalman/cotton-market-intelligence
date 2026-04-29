@@ -26,6 +26,14 @@ import { hfChatCompletion, parseJsonResponse } from "@/lib/hf/client";
 import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
 import { getSupabase, addBusinessDays } from "@/lib/supabase";
 import type { Horizon } from "@/lib/models/types";
+import { runPipeline, alignToDaily } from "@/lib/pipeline/runner";
+import { buildFeatures, type FeatureRow } from "@/lib/pipeline/features";
+import {
+  trainAndEvaluate,
+  predictChampion,
+  type TrainResult,
+} from "@/lib/models/trainer";
+import type { Benchmarks } from "@/lib/types";
 
 const VALID_HORIZONS: Horizon[] = ["5d", "21d", "63d"];
 
@@ -38,6 +46,43 @@ interface QuickQuote {
   label: string;
   price: number | null;
   change_pct: number | null;
+}
+
+interface PredictionDriver {
+  feature: string;
+  importance: number;
+}
+
+interface ModelStackForecast {
+  predicted_price: number;
+  predicted_return: number;
+  lower_price: number;
+  upper_price: number;
+  direction: "up" | "down" | "flat";
+  confidence: number;
+  reasoning: string;
+  risk: string;
+  model: {
+    id: string;
+    name: string;
+    train_samples: number;
+    test_samples: number;
+    test_mae: number;
+    test_rmse: number;
+    direction_accuracy: number;
+  };
+  top_drivers: PredictionDriver[];
+}
+
+interface LlmForecast {
+  predicted_price: number;
+  predicted_return: number;
+  direction: "up" | "down" | "flat";
+  confidence: number;
+  reasoning: string;
+  risk: string;
+  methodology: Record<string, { signal: string; observation: string; weight: string }> | null;
+  key_factors: { factor: string; impact: string; magnitude: string }[];
 }
 
 async function fetchQuickQuote(ticker: string, label: string): Promise<QuickQuote> {
@@ -62,6 +107,149 @@ async function fetchQuickQuote(ticker: string, label: string): Promise<QuickQuot
   } catch {
     return { ticker, label, price: null, change_pct: null };
   }
+}
+
+function horizonDaysFor(horizon: Horizon): number {
+  return horizon === "5d" ? 5 : horizon === "21d" ? 21 : 63;
+}
+
+function directionFromReturn(value: number): "up" | "down" | "flat" {
+  if (value > 0.003) return "up";
+  if (value < -0.003) return "down";
+  return "flat";
+}
+
+function isPlausiblePrice(price: number, currentPrice: number): boolean {
+  return (
+    Number.isFinite(price) &&
+    price > currentPrice * 0.85 &&
+    price < currentPrice * 1.15
+  );
+}
+
+function latestUsableRow(rows: FeatureRow[]): FeatureRow | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    const finiteFeatures = Object.values(row.features).filter(
+      (value) => value != null && Number.isFinite(value)
+    ).length;
+    if (finiteFeatures >= 10) return row;
+  }
+  return null;
+}
+
+function buildModelDrivers(
+  row: FeatureRow,
+  result: TrainResult
+): PredictionDriver[] {
+  const state = result.champion.state as Record<string, unknown>;
+  const selected = Array.isArray(state.selected_features)
+    ? (state.selected_features as number[])
+    : [];
+
+  const selectedDrivers = selected
+    .slice(0, 6)
+    .map((idx, rank) => ({
+      feature: result.featureNames[idx],
+      importance: Math.round((0.9 - rank * 0.1) * 100) / 100,
+    }))
+    .filter((driver) => Boolean(driver.feature));
+
+  if (selectedDrivers.length > 0) return selectedDrivers;
+
+  const preferred = [
+    "cotton_ret_21d",
+    "pct_rank_252d",
+    "trend_regime",
+    "cotton_vol_21d",
+    "rsi_14",
+    "ma_cross_50_200",
+    "dxy_ret_21d",
+    "oil_ret_21d",
+    "vix_level",
+  ];
+
+  return preferred
+    .filter((name) => {
+      const value = row.features[name];
+      return value != null && Number.isFinite(value);
+    })
+    .slice(0, 6)
+    .map((feature, idx) => ({
+      feature,
+      importance: Math.round((0.75 - idx * 0.08) * 100) / 100,
+    }));
+}
+
+async function runModelStackForecast(
+  horizon: Horizon,
+  currentPrice: number,
+  benchmarks: Benchmarks
+): Promise<ModelStackForecast | null> {
+  const pipeline = await runPipeline();
+  const dates = pipeline.target.map((point) => point.date);
+  if (dates.length < 320) return null;
+
+  const aligned = alignToDaily(pipeline.factors, dates);
+  const rows = buildFeatures(dates, aligned);
+  if (rows.length < 320) return null;
+
+  const trainResult = trainAndEvaluate(rows, horizon);
+  const row = latestUsableRow(rows);
+  if (!row) return null;
+
+  const prediction = predictChampion(trainResult, row);
+  if (!prediction || !isPlausiblePrice(prediction.value, currentPrice)) {
+    return null;
+  }
+
+  const predictedPrice = Math.round(prediction.value * 10000) / 10000;
+  const predictedReturn = (predictedPrice - currentPrice) / currentPrice;
+  const horizonDays = horizonDaysFor(horizon);
+  const realizedVolInterval =
+    currentPrice *
+    (benchmarks.vol_30d_ann / 100) *
+    Math.sqrt(horizonDays / 252) *
+    1.96;
+  const modelInterval = Math.max(
+    trainResult.champion.rmse * 1.96,
+    realizedVolInterval,
+    currentPrice * 0.005
+  );
+
+  const confidence = Math.round(
+    Math.min(
+      95,
+      Math.max(35, trainResult.champion.direction_accuracy * 100)
+    )
+  );
+
+  return {
+    predicted_price: predictedPrice,
+    predicted_return: Math.round(predictedReturn * 100000) / 100000,
+    lower_price:
+      Math.round(Math.max(0.01, predictedPrice - modelInterval) * 10000) /
+      10000,
+    upper_price: Math.round((predictedPrice + modelInterval) * 10000) / 10000,
+    direction: directionFromReturn(predictedReturn),
+    confidence,
+    reasoning:
+      `${trainResult.champion.model_name} was selected from ${trainResult.results.length} local models ` +
+      `using a held-out train/test split. It predicts $${predictedPrice.toFixed(4)}/lb for the ${horizon} horizon ` +
+      `with ${(trainResult.champion.direction_accuracy * 100).toFixed(1)}% test directional accuracy.`,
+    risk:
+      "Model forecast uses historical market relationships; sudden weather, policy, or geopolitical shocks can invalidate those relationships.",
+    model: {
+      id: trainResult.champion.model_id,
+      name: trainResult.champion.model_name,
+      train_samples: trainResult.champion.n_train,
+      test_samples: trainResult.champion.n_test,
+      test_mae: trainResult.champion.mae,
+      test_rmse: trainResult.champion.rmse,
+      direction_accuracy: trainResult.champion.direction_accuracy,
+    },
+    top_drivers: buildModelDrivers(row, trainResult),
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -208,58 +396,149 @@ ${sentimentText}
 === TASK ===
 Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
 
-    // Call LLM
-    let predictedPrice = currentPrice;
-    let direction: "up" | "down" | "flat" = "flat";
-    let confidence = 35;
-    let reasoning = "";
-    let keyFactors: { factor: string; impact: string; magnitude: string }[] = [];
-    let risk = "";
-    let source = "heuristic";
-    let methodology: Record<string, { signal: string; observation: string; weight: string }> | null = null;
+    const [modelStackForecast, llmText] = await Promise.all([
+      runModelStackForecast(horizon, currentPrice, bm).catch(() => null),
+      hfChatCompletion({
+        messages: [
+          { role: "system", content: PRICE_PREDICTION_PROMPT },
+          { role: "user", content: userMsg },
+        ],
+        max_tokens: 800,
+        temperature: 0.2,
+      }).catch(() => null),
+    ]);
 
-    const llmText = await hfChatCompletion({
-      messages: [
-        { role: "system", content: PRICE_PREDICTION_PROMPT },
-        { role: "user", content: userMsg },
-      ],
-      max_tokens: 800,
-      temperature: 0.2,
-    });
-
+    let llmForecast: LlmForecast | null = null;
     if (llmText) {
       const parsed = parseJsonResponse(llmText);
       if (parsed && parsed.predicted_price) {
         const pp = Number(parsed.predicted_price);
-        if (pp > currentPrice * 0.85 && pp < currentPrice * 1.15) {
-          predictedPrice = Math.round(pp * 10000) / 10000;
-          direction = String(parsed.direction) === "up" ? "up" : String(parsed.direction) === "down" ? "down" : "flat";
-          confidence = Math.min(95, Math.max(10, Number(parsed.confidence) || 50));
-          reasoning = String(parsed.reasoning || "");
-          keyFactors = Array.isArray(parsed.key_factors) ? parsed.key_factors as typeof keyFactors : [];
-          risk = String(parsed.risk || "");
-          source = "LLM Analyst (Qwen 2.5 7B)";
-          if (parsed.methodology && typeof parsed.methodology === "object") {
-            methodology = parsed.methodology as unknown as typeof methodology;
-          }
+        if (isPlausiblePrice(pp, currentPrice)) {
+          const predictedPrice = Math.round(pp * 10000) / 10000;
+          const predictedReturn = (predictedPrice - currentPrice) / currentPrice;
+          llmForecast = {
+            predicted_price: predictedPrice,
+            predicted_return: Math.round(predictedReturn * 100000) / 100000,
+            direction:
+              String(parsed.direction) === "up"
+                ? "up"
+                : String(parsed.direction) === "down"
+                  ? "down"
+                  : "flat",
+            confidence: Math.min(95, Math.max(10, Number(parsed.confidence) || 50)),
+            reasoning: String(parsed.reasoning || ""),
+            key_factors: Array.isArray(parsed.key_factors)
+              ? parsed.key_factors as LlmForecast["key_factors"]
+              : [],
+            risk: String(parsed.risk || ""),
+            methodology:
+              parsed.methodology && typeof parsed.methodology === "object"
+                ? parsed.methodology as LlmForecast["methodology"]
+                : null,
+          };
         }
       }
     }
 
-    // Heuristic fallback
-    if (source === "heuristic") {
+    let predictedPrice: number;
+    let predictedReturn: number;
+    let direction: "up" | "down" | "flat";
+    let confidence: number;
+    let reasoning: string;
+    let risk: string;
+    let methodology: LlmForecast["methodology"] = llmForecast?.methodology ?? null;
+    let keyFactors: LlmForecast["key_factors"] = [];
+    let topDrivers: PredictionDriver[] = [];
+    let model = modelStackForecast?.model ?? null;
+    let lowerPrice: number;
+    let upperPrice: number;
+
+    if (modelStackForecast) {
+      predictedPrice = modelStackForecast.predicted_price;
+      predictedReturn = modelStackForecast.predicted_return;
+      direction = modelStackForecast.direction;
+      confidence = modelStackForecast.confidence;
+      reasoning = modelStackForecast.reasoning;
+      risk = llmForecast?.risk || modelStackForecast.risk;
+      topDrivers = modelStackForecast.top_drivers;
+      keyFactors = topDrivers.map((driver) => ({
+        factor: driver.feature,
+        impact: direction === "down" ? "bearish" : "bullish",
+        magnitude:
+          driver.importance >= 0.7
+            ? "high"
+            : driver.importance >= 0.45
+              ? "medium"
+              : "low",
+      }));
+      lowerPrice = modelStackForecast.lower_price;
+      upperPrice = modelStackForecast.upper_price;
+    } else if (llmForecast) {
+      predictedPrice = llmForecast.predicted_price;
+      predictedReturn = llmForecast.predicted_return;
+      direction = llmForecast.direction;
+      confidence = llmForecast.confidence;
+      reasoning = llmForecast.reasoning;
+      risk = llmForecast.risk;
+      keyFactors = llmForecast.key_factors;
+      const source = "LLM Analyst (Qwen 2.5 7B)";
+      const horizonDays = horizonDaysFor(horizon);
+      const ciWidth = (bm.vol_30d_ann / 100) * Math.sqrt(horizonDays / 252) * 1.96;
+      lowerPrice = Math.round(currentPrice * (1 - ciWidth) * 10000) / 10000;
+      upperPrice = Math.round(currentPrice * (1 + ciWidth) * 10000) / 10000;
+      model = {
+        id: "llm_analyst",
+        name: source,
+        train_samples: 0,
+        test_samples: 0,
+        test_mae: 0,
+        test_rmse: ciWidth,
+        direction_accuracy: confidence / 100,
+      };
+    } else {
       const momentum = bm.change_30d_pct / 100;
       const meanRev = (0.5 - bm.pct_rank_1y) * 0.03;
       const blend = momentum * 0.6 + meanRev * 0.4;
       const cappedReturn = Math.max(-0.08, Math.min(0.08, blend));
       predictedPrice = Math.round(currentPrice * (1 + cappedReturn) * 10000) / 10000;
       direction = cappedReturn > 0.003 ? "up" : cappedReturn < -0.003 ? "down" : "flat";
+      predictedReturn = (predictedPrice - currentPrice) / currentPrice;
+      confidence = 35;
       reasoning = `Heuristic: momentum (${bm.change_30d_pct > 0 ? "+" : ""}${bm.change_30d_pct.toFixed(1)}% 30d) + mean reversion (${(bm.pct_rank_1y * 100).toFixed(0)}th pct). LLM unavailable.`;
+      risk = "Heuristic forecast only; model stack and LLM analyst were unavailable.";
+      const horizonDays = horizonDaysFor(horizon);
+      const ciWidth = (bm.vol_30d_ann / 100) * Math.sqrt(horizonDays / 252) * 1.96;
+      lowerPrice = Math.round(currentPrice * (1 - ciWidth) * 10000) / 10000;
+      upperPrice = Math.round(currentPrice * (1 + ciWidth) * 10000) / 10000;
+      model = {
+        id: "heuristic",
+        name: "Heuristic fallback",
+        train_samples: 0,
+        test_samples: 0,
+        test_mae: 0,
+        test_rmse: ciWidth,
+        direction_accuracy: confidence / 100,
+      };
     }
 
-    const predictedReturn = (predictedPrice - currentPrice) / currentPrice;
-    const horizonDays = horizon === "5d" ? 5 : horizon === "21d" ? 21 : 63;
-    const ciWidth = (bm.vol_30d_ann / 100) * Math.sqrt(horizonDays / 252) * 1.96;
+    const responseModel = model ?? {
+      id: "heuristic",
+      name: "Heuristic fallback",
+      train_samples: 0,
+      test_samples: 0,
+      test_mae: 0,
+      test_rmse: 0,
+      direction_accuracy: confidence / 100,
+    };
+
+    if (topDrivers.length === 0) {
+      topDrivers = keyFactors.map((f) => ({
+        feature: f.factor,
+        importance: f.magnitude === "high" ? 0.8 : f.magnitude === "medium" ? 0.5 : 0.2,
+      }));
+    }
+
+    const horizonDays = horizonDaysFor(horizon);
 
     const response = {
       version: 6,
@@ -270,38 +549,29 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
         horizon,
         predicted_return: Math.round(predictedReturn * 100000) / 100000,
         predicted_price: predictedPrice,
-        lower_price: Math.round(currentPrice * (1 - ciWidth) * 10000) / 10000,
-        upper_price: Math.round(currentPrice * (1 + ciWidth) * 10000) / 10000,
+        lower_price: lowerPrice,
+        upper_price: upperPrice,
         confidence_level: 0.95,
         direction,
       }],
-      model: {
-        id: source === "heuristic" ? "heuristic" : "llm_analyst",
-        name: source,
-        train_samples: 0,
-        test_rmse: ciWidth,
-        direction_accuracy: confidence / 100,
-      },
+      model: responseModel,
       reasoning,
       confidence,
       risk,
       methodology,
       key_factors: keyFactors,
-      top_drivers: keyFactors.map((f) => ({
-        feature: f.factor,
-        importance: f.magnitude === "high" ? 0.8 : f.magnitude === "medium" ? 0.5 : 0.2,
-      })),
+      top_drivers: topDrivers,
       // What the LLM saw (transparency)
       cross_market_signals: (crossMarketQuotes as QuickQuote[]).filter((q) => q.price != null),
       sentiment,
-      hf_forecasts: source !== "heuristic" ? [{
+      hf_forecasts: llmForecast ? [{
         provider: "hf_llm",
-        predicted_price: predictedPrice,
-        predicted_return: predictedReturn,
-        direction,
-        confidence: confidence / 100,
+        predicted_price: llmForecast.predicted_price,
+        predicted_return: llmForecast.predicted_return,
+        direction: llmForecast.direction,
+        confidence: llmForecast.confidence / 100,
         model_used: "Qwen/Qwen2.5-7B-Instruct",
-        reasoning,
+        reasoning: llmForecast.reasoning,
       }] : [],
     };
 

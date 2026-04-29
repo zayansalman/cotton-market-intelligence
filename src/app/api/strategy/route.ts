@@ -3,8 +3,8 @@ import type {
   Benchmarks,
   Headline,
   Strategy,
-  MonthlyPlan,
   LandedCostResponse,
+  PurchaserInput,
 } from "@/lib/types";
 import {
   applyRateLimitHeaders,
@@ -12,13 +12,14 @@ import {
   rateLimitExceededResponse,
 } from "@/lib/rate-limit";
 import { parseStrategyRequest } from "@/lib/schemas/strategy-request";
-import { safeParseBody, safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
+import { safeParseBody, safeErrorResponse } from "@/lib/api-security";
 import { checkAiQuota, recordAiUsage } from "@/lib/usage-quota";
 import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { computeUnifiedSignal } from "@/lib/engine/unified-signal";
 import type { UnifiedSignal } from "@/lib/engine/unified-signal";
 import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
 import { analyzeNewsForStrategy } from "@/lib/hf/news-analysis";
+import { heuristicStrategyV2 } from "@/lib/engine/heuristic-v2";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -52,149 +53,63 @@ Return ONLY a JSON object with these fields:
 }
 The monthly_plan pct values MUST sum to 100.`;
 
-interface StrategyRequest {
-  benchmarks: Benchmarks;
-  headlines: Headline[];
-  tonnage: number;
-  months: number;
-  landedCost?: LandedCostResponse | null;
-}
-
 type StrategyProvider = "huggingface" | "heuristic";
 
-function heuristicStrategy(
-  bm: Benchmarks,
-  tonnage: number,
-  months: number,
-  landedCost?: LandedCostResponse | null
-): Strategy {
-  const rank = bm.pct_rank_1y;
-  const z = bm.z_score_1y;
-  const vol = bm.vol_30d_ann;
+function mapSignalToReturn(signal: Strategy["signal"]): number {
+  if (signal === "STRONG_BUY") return 0.03;
+  if (signal === "BUY") return 0.015;
+  if (signal === "AVOID") return -0.02;
+  return 0;
+}
 
-  let signal: Strategy["signal"];
-  let confidence: number;
-
-  if (rank < 0.15 && z < -1) {
-    signal = "STRONG_BUY";
-    confidence = 80;
-  } else if (rank < 0.3) {
-    signal = "BUY";
-    confidence = 65;
-  } else if (rank > 0.8) {
-    signal = "AVOID";
-    confidence = 70;
-  } else {
-    signal = "HOLD";
-    confidence = 50;
-  }
-
-  const base = Array.from({ length: months }, (_, i) => {
-    if (signal === "STRONG_BUY" || signal === "BUY")
-      return Math.exp(-0.3 * i);
-    if (signal === "AVOID") return Math.exp(0.3 * i);
-    return 1;
-  });
-
-  if (vol > 30) {
-    for (let i = 0; i < base.length; i++) {
-      base[i] = 0.7 * base[i] + 0.3;
-    }
-  }
-
-  const sum = base.reduce((a, b) => a + b, 0);
-  const weights = base.map((b) => b / sum);
-
-  const signalText: Record<string, string> = {
-    STRONG_BUY: "Front-loaded — price is historically cheap",
-    BUY: "Moderately front-loaded — attractive entry",
-    AVOID: "Back-loaded — price is expensive, defer",
-    HOLD: "Uniform — no strong directional signal",
-  };
-
-  const plan: MonthlyPlan[] = weights.map((w, i) => ({
-    month: i + 1,
-    pct: Math.round(w * 1000) / 10,
-    tonnes: Math.round(tonnage * w),
-    rationale: signalText[signal],
-  }));
-
-  const above50 = bm.above_ma_50d ? "above" : "below";
-  const above200 = bm.above_ma_200d ? "above" : "below";
-  const px = bm.current_price;
-  const landedBdtKg = landedCost?.breakdown.effective_bdt_kg ?? null;
-  const landedUsdT = landedCost?.breakdown.effective_usd_t ?? null;
-
-  const summaries: Record<string, string> = {
-    STRONG_BUY: `Price at $${px.toFixed(4)}/lb is historically cheap (${(rank * 100).toFixed(0)}% of 1Y range). Prioritise building inventory now.`,
-    BUY: `Price at $${px.toFixed(4)}/lb is moderately attractive (${(rank * 100).toFixed(0)}% of 1Y range). Increase procurement pacing.`,
-    AVOID: `Price at $${px.toFixed(4)}/lb is elevated (${(rank * 100).toFixed(0)}% of 1Y range). Minimise new exposure and defer.`,
-    HOLD: `Price at $${px.toFixed(4)}/lb is mid-range (${(rank * 100).toFixed(0)}% of 1Y range). Maintain baseline procurement cadence.`,
-  };
-
-  const landedSummary =
-    landedBdtKg != null && landedUsdT != null
-      ? ` Current landed cost estimate is Tk ${landedBdtKg.toFixed(2)}/kg (~$${landedUsdT.toFixed(0)}/t effective).`
-      : "";
-
+function attachConstraintFields(
+  strategy: Strategy,
+  heuristicBaseResult: ReturnType<typeof heuristicStrategyV2>
+) {
   return {
-    signal,
-    confidence,
-    executive_summary: summaries[signal] + landedSummary,
-    market_analysis:
-      `**Price context**: $${px.toFixed(4)}/lb sits at the ${(rank * 100).toFixed(0)}% percentile of its ` +
-      `1-year range ($${bm.low_1y.toFixed(4)} – $${bm.high_1y.toFixed(4)}). ` +
-      `Z-score: ${z.toFixed(2)}. Currently ${above50} 50d MA ($${bm.ma_50d.toFixed(4)}) ` +
-      `and ${above200} 200d MA ($${bm.ma_200d.toFixed(4)}).\n\n` +
-      `**Momentum**: 30-day change ${bm.change_30d_pct > 0 ? "+" : ""}${bm.change_30d_pct.toFixed(1)}%, ` +
-      `90-day change ${bm.change_90d_pct > 0 ? "+" : ""}${bm.change_90d_pct.toFixed(1)}%.\n\n` +
-      `**Volatility**: ${vol.toFixed(1)}% annualized (30d). ` +
-      `${vol > 30 ? "Elevated — spread purchases to reduce execution risk." : "Normal regime."}\n\n` +
-      (landedBdtKg != null && landedUsdT != null
-        ? `**Bangladesh landed cost**: Effective cotton cost is approximately Tk ${landedBdtKg.toFixed(2)}/kg ` +
-          `(~$${landedUsdT.toFixed(0)}/t) under current basis, freight, FX, insurance, duty, and wastage assumptions.\n\n`
-        : "") +
-      `*Statistical heuristic. Connect a configured AI provider (Hugging Face-first) for richer news interpretation and strategic depth.*`,
-    monthly_plan: plan,
-    risk_factors: [
-      "Statistical heuristic only — no news or fundamental analysis.",
-      ...(vol > 30
-        ? ["Elevated volatility increases execution risk on large orders."]
-        : []),
-      ...(rank > 0.8
-        ? ["Price is near 1Y highs — basis risk is elevated."]
-        : []),
-    ],
-    next_actions: [
-      "Set HF_TOKEN to enable AI-powered analysis (Hugging Face-first).",
-      ...(landedBdtKg != null
-        ? [
-            `Run margin check versus yarn realization using Tk ${landedBdtKg.toFixed(2)}/kg landed cotton.`,
-          ]
-        : []),
-      "Verify quality/count mix and wastage assumptions.",
-      "Align roadmap with credit limits and warehouse capacity.",
-    ],
-    key_levels: {
-      support: bm.low_1y,
-      resistance: bm.high_1y,
-      fair_value: Math.round(((bm.ma_50d + bm.ma_200d) / 2) * 10000) / 10000,
-    },
-    source: "heuristic",
-    provider: "heuristic",
+    ...strategy,
+    binding_constraints: heuristicBaseResult.binding_constraints,
+    assumption_set: heuristicBaseResult.assumption_set,
+    constraint_risks: heuristicBaseResult.constraint_risks,
+    plan_feasibility_score: heuristicBaseResult.plan_feasibility_score,
   };
 }
 
 function buildUserMessage(
   benchmarks: Benchmarks,
   headlines: Headline[],
-  tonnage: number,
-  months: number,
+  purchaserInput: PurchaserInput,
   landedCost?: LandedCostResponse | null
 ): string {
+  const tonnage = purchaserInput.demand.required_tonnes;
+  const months = purchaserInput.demand.planning_horizon_months;
   const headlineSummary = headlines
     .slice(0, 25)
     .map((h) => ({ title: h.title, summary: h.summary.slice(0, 150) }));
+  const purchaserHighlights = [
+    `- Total tonnage: ${tonnage.toLocaleString()} tonnes`,
+    `- Horizon: ${months} months`,
+    `- Implied monthly rate: ${Math.round(tonnage / months).toLocaleString()} tonnes/month`,
+    ...(purchaserInput.timeline?.urgency_level
+      ? [`- Urgency: ${purchaserInput.timeline.urgency_level}`]
+      : []),
+    ...(purchaserInput.timeline?.max_monthly_receipt_capacity_tonnes
+      ? [
+          `- Receipt capacity: ${purchaserInput.timeline.max_monthly_receipt_capacity_tonnes.toLocaleString()} tonnes/month`,
+        ]
+      : []),
+    ...(purchaserInput.quality?.preferred_origins?.length
+      ? [
+          `- Preferred origins: ${purchaserInput.quality.preferred_origins.join(", ")}`,
+        ]
+      : []),
+    ...(purchaserInput.finance?.max_credit_days !== undefined
+      ? [`- Max credit days: ${purchaserInput.finance.max_credit_days}`]
+      : []),
+    ...(purchaserInput.logistics?.incoterm
+      ? [`- Incoterm: ${purchaserInput.logistics.incoterm}`]
+      : []),
+  ].join("\n");
   const landedCostSection = landedCost
     ? `\n\nBANGLADESH LANDED COST CONTEXT:
 ${JSON.stringify(landedCost, null, 2)}
@@ -209,25 +124,14 @@ RECENT NEWS HEADLINES:
 ${JSON.stringify(headlineSummary, null, 2)}
 
 CLIENT REQUIREMENT:
-- Total tonnage: ${tonnage.toLocaleString()} tonnes
-- Horizon: ${months} months
-- Implied monthly rate: ${Math.round(tonnage / months).toLocaleString()} tonnes/month
+${purchaserHighlights}
+
+PURCHASER INPUT (canonical schema):
+${JSON.stringify(purchaserInput, null, 2)}
+
+Treat the purchaser input as operational constraints that must shape timing, pacing, origin flexibility, supplier concentration, logistics, and credit risk.
 
 Analyze the market and generate a procurement strategy for this client.${landedCostSection}`;
-}
-
-function safeJsonParse(text: string): Record<string, unknown> | null {
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }
 }
 
 function resolveProvider(): StrategyProvider {
@@ -294,14 +198,16 @@ export async function POST(req: Request) {
     }
 
     const { purchaserInput, benchmarks, headlines, landedCost } = parsed.data;
-    const tonnage = purchaserInput.demand.required_tonnes;
-    const months = purchaserInput.demand.planning_horizon_months;
+    const heuristicBaseResult = heuristicStrategyV2(
+      purchaserInput,
+      benchmarks,
+      landedCost
+    );
 
     const userMsg = buildUserMessage(
       benchmarks,
       headlines,
-      tonnage,
-      months,
+      purchaserInput,
       landedCost
     );
     const provider = resolveProvider();
@@ -309,12 +215,7 @@ export async function POST(req: Request) {
     // --- Compute unified signal (non-blocking) ---
     let unifiedSignal: UnifiedSignal | null = null;
     try {
-      // Get heuristic baseline return
-      const heuristicBaseResult = heuristicStrategy(benchmarks, tonnage, months);
-      const heuristicReturn = heuristicBaseResult.signal === "STRONG_BUY" ? 0.03
-        : heuristicBaseResult.signal === "BUY" ? 0.015
-        : heuristicBaseResult.signal === "AVOID" ? -0.02
-        : 0;
+      const heuristicReturn = mapSignalToReturn(heuristicBaseResult.signal);
 
       // Run sentiment analysis and deep news analysis in parallel
       const [sentimentResult, newsAnalysisResult] = await Promise.allSettled([
@@ -346,7 +247,7 @@ export async function POST(req: Request) {
     // If quota exhausted, skip AI and go straight to heuristic
     if (provider !== "heuristic" && quota.degraded_to_heuristic) {
       console.warn(`[strategy] Quota exceeded for request — degrading to heuristic. Reason: ${quota.reason}`);
-      const result = heuristicStrategy(benchmarks, tonnage, months, landedCost);
+      const result = { ...heuristicBaseResult };
       result.risk_factors = [
         "AI quota exceeded — using statistical heuristic. Results may lack news context.",
         ...result.risk_factors,
@@ -358,11 +259,14 @@ export async function POST(req: Request) {
       const strategy = await runHuggingFaceStrategy(userMsg, process.env.HF_TOKEN);
       if (strategy) {
         recordAiUsage(req);
-        return applyRateLimitHeaders(NextResponse.json(strategy), allHeaders);
+        return applyRateLimitHeaders(
+          NextResponse.json(attachConstraintFields(strategy, heuristicBaseResult)),
+          allHeaders
+        );
       }
     }
 
-    const heuristicResult = heuristicStrategy(benchmarks, tonnage, months, landedCost);
+    const heuristicResult = { ...heuristicBaseResult };
     if (unifiedSignal) {
       heuristicResult.signal = unifiedSignal.signal;
       heuristicResult.confidence = Math.round(unifiedSignal.confidence * 100);

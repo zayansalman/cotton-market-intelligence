@@ -87,6 +87,40 @@ describe("parseStrategyRequest", () => {
       expect(result.ok).toBe(true);
     });
 
+    it("passes advanced purchaser fields through unchanged", () => {
+      const purchaserInput = {
+        demand: { required_tonnes: 1800, planning_horizon_months: 4 },
+        timeline: {
+          urgency_level: "urgent" as const,
+          max_monthly_receipt_capacity_tonnes: 300,
+        },
+        quality: {
+          preferred_origins: ["India"],
+          hvi_required: true,
+        },
+        logistics: {
+          incoterm: "CFR" as const,
+          discharge_port: "Chattogram",
+        },
+        finance: {
+          max_credit_days: 45,
+          fx_assumption: 118,
+        },
+      };
+
+      const result = parseStrategyRequest({
+        strategy_input_version: 2,
+        purchaser_input: purchaserInput,
+        benchmarks: MOCK_BENCHMARKS,
+        headlines: [],
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.purchaserInput).toEqual(purchaserInput);
+      }
+    });
+
     it("rejects V2 with invalid purchaser_input", () => {
       const result = parseStrategyRequest({
         strategy_input_version: 2,

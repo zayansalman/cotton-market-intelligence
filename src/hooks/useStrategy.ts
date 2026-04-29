@@ -7,6 +7,7 @@ import type {
   Strategy,
   LandedCostResponse,
   PurchaserInput,
+  Benchmarks,
 } from "@/lib/types";
 
 interface UseStrategyDeps {
@@ -15,6 +16,34 @@ interface UseStrategyDeps {
   landedCost: LandedCostResponse | null;
   purchaserInput: PurchaserInput;
   setError: (msg: string | null) => void;
+}
+
+export interface StrategyRequestBody {
+  strategy_input_version: 2;
+  purchaser_input: PurchaserInput;
+  benchmarks: Benchmarks;
+  headlines: Headline[];
+  landedCost?: LandedCostResponse;
+}
+
+export function buildStrategyRequestBody({
+  benchmarks,
+  headlines,
+  landedCost,
+  purchaserInput,
+}: {
+  benchmarks: Benchmarks;
+  headlines: Headline[];
+  landedCost: LandedCostResponse | null;
+  purchaserInput: PurchaserInput;
+}): StrategyRequestBody {
+  return {
+    strategy_input_version: 2,
+    purchaser_input: purchaserInput,
+    benchmarks,
+    headlines,
+    ...(landedCost ? { landedCost } : {}),
+  };
 }
 
 export function useStrategy({
@@ -31,16 +60,16 @@ export function useStrategy({
     if (!priceData) return;
     setGenerating(true);
     try {
+      const body = buildStrategyRequestBody({
+        benchmarks: priceData.benchmarks,
+        headlines,
+        landedCost,
+        purchaserInput,
+      });
       const res = await fetch("/api/strategy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          benchmarks: priceData.benchmarks,
-          headlines,
-          tonnage: purchaserInput.demand.required_tonnes,
-          months: purchaserInput.demand.planning_horizon_months,
-          landedCost,
-        }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         const data: Strategy = await res.json();

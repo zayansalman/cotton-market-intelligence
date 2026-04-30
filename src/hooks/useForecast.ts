@@ -22,6 +22,16 @@ interface HFForecast {
   reasoning?: string;
 }
 
+interface ForecastEvidence {
+  source: string;
+  kind: "model_stack" | "heuristic" | "sentiment" | "news_context";
+  predicted_return: number | null;
+  direction: "up" | "down" | "flat";
+  confidence: number | null;
+  validation_note: string;
+  reasoning: string;
+}
+
 interface PredictionResponse {
   current_price: number;
   current_date: string;
@@ -29,12 +39,13 @@ interface PredictionResponse {
   model: {
     id: string;
     name: string;
-    kind: "model_stack" | "llm_fallback" | "heuristic_fallback";
+    kind: "llm_synthesis" | "model_stack" | "llm_fallback" | "heuristic_fallback";
     test_rmse: number | null;
     direction_accuracy: number | null;
     validation_note?: string;
   };
   top_drivers: { feature: string; importance: number }[];
+  forecast_evidence?: ForecastEvidence[];
   hf_forecasts?: HFForecast[];
   sentiment?: { label: string; aggregate_score: number; n_headlines: number } | null;
   methodology?: Record<string, MethodologySignal> | null;
@@ -114,7 +125,9 @@ export function useForecast() {
       const localReturn = primary.predicted_return;
       const localDir = localReturn > 0.003 ? "up" : localReturn < -0.003 ? "down" : "flat";
       const primarySourceName =
-        data.model.kind === "model_stack"
+        data.model.kind === "llm_synthesis"
+          ? "LLM Analyst Synthesis (Qwen 2.5 7B)"
+          : data.model.kind === "model_stack"
           ? `Quant Model (${data.model.name})`
           : data.model.kind === "llm_fallback"
             ? "LLM Analyst (Qwen 2.5 7B)"
@@ -125,13 +138,25 @@ export function useForecast() {
           : data.model.validation_note ?? "No historical validation metrics claimed";
       sources.push({
         name: primarySourceName,
-        weight: data.model.kind === "model_stack" ? "primary model" : "fallback",
+        weight: data.model.kind === "llm_synthesis" ? "final decision" : data.model.kind === "model_stack" ? "primary model" : "fallback",
         direction: localDir as "up" | "down" | "flat",
         detail: `${(localReturn * 100).toFixed(2)}% predicted return, ${primaryAccuracy}`,
       });
 
-      // 2. HF forecasts
-      if (data.hf_forecasts && data.hf_forecasts.length > 0) {
+      // 2. Evidence the analyst considered
+      if (data.forecast_evidence?.length) {
+        for (const evidence of data.forecast_evidence) {
+          const evidenceReturn = evidence.predicted_return;
+          sources.push({
+            name: evidence.source,
+            weight: evidence.kind === "model_stack" ? "quant evidence" : "supporting evidence",
+            direction: evidence.direction,
+            detail:
+              `${evidenceReturn != null ? `${(evidenceReturn * 100).toFixed(2)}% implied return, ` : ""}` +
+              evidence.reasoning.slice(0, 140),
+          });
+        }
+      } else if (data.hf_forecasts && data.hf_forecasts.length > 0) {
         for (const hf of data.hf_forecasts) {
           if (data.model.kind === "llm_fallback" && hf.provider === "hf_llm") {
             continue;
@@ -142,7 +167,7 @@ export function useForecast() {
             const cappedReturn = Math.max(-MAX_21D_RETURN, Math.min(MAX_21D_RETURN, hfReturn));
             sources.push({
               name: hf.provider === "hf_llm" ? "LLM Analyst (Qwen 2.5 7B)" : `AI Model (${hf.model_used})`,
-              weight: hf.provider === "hf_llm" ? "20%" : "10%",
+              weight: hf.provider === "hf_llm" ? "analyst evidence" : "model evidence",
               direction: (hf.direction as "up" | "down" | "flat") ?? "flat",
               detail: hf.reasoning?.slice(0, 100) ?? `${(cappedReturn * 100).toFixed(2)}% return, ${(hf.confidence * 100).toFixed(0)}% confidence`,
             });
@@ -150,12 +175,12 @@ export function useForecast() {
         }
       }
 
-      // 3. Sentiment
-      if (data.sentiment) {
+      // 3. Sentiment fallback for older responses without forecast_evidence
+      if (data.sentiment && !data.forecast_evidence?.some((e) => e.kind === "sentiment")) {
         const sentDir = data.sentiment.aggregate_score > 0.1 ? "up" : data.sentiment.aggregate_score < -0.1 ? "down" : "flat";
         sources.push({
           name: "News Sentiment (DistilRoBERTa)",
-          weight: "15%",
+          weight: "sentiment evidence",
           direction: sentDir as "up" | "down" | "flat",
           detail: `${data.sentiment.label} (score: ${data.sentiment.aggregate_score.toFixed(2)}, ${data.sentiment.n_headlines} headlines analyzed)`,
         });

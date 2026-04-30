@@ -386,8 +386,8 @@ The challenge capability is the key innovation. Example: your heuristic model sa
 LLM APIs are unreliable. Build a fallback chain:
 
 ```
-Local model stack (primary forecast)
-  --> HF analyst forecast (fallback/context)
+HF analyst synthesis (final forecast when configured)
+  --> Local model stack (fallback)
     --> Heuristic-only (emergency fallback)
 ```
 
@@ -395,16 +395,16 @@ The system must never fail to produce a signal because an API is down. Degrade g
 
 ---
 
-## Step 9: Build the Unified Signal
+## Step 9: Build the Analyst Synthesis
 
-Combine all signal sources with a weighted ensemble:
+Feed all signal sources into the LLM analyst, while preserving candidate evidence for auditability:
 
-| Source | Weight | Rationale |
+| Source | Role | Rationale |
 |--------|--------|-----------|
-| Model forecast | 40% | Walk-forward validated; most rigorous |
-| Heuristic | 25% | Simple rules (percentile rank, momentum); robust, no overfitting risk |
-| LLM news analysis | 20% | Qualitative context humans value; captures events models miss |
-| Sentiment | 15% | Weakest individual signal but orthogonal to the others |
+| Model forecast | Quant evidence | Walk-forward/train-test validated; most rigorous |
+| Heuristic | Sanity check | Simple rules (percentile rank, momentum); robust, no overfitting risk |
+| LLM analyst | Final decision layer | Weighs model evidence against context and explains conflicts |
+| Sentiment | Catalyst evidence | Weakest individual signal but orthogonal to the others |
 
 ### Confidence Scoring
 
@@ -458,7 +458,7 @@ The UI has one job: help a procurement manager make a better decision in under 6
 
 1. **Price chart with forecast overlay:** Historical prices, model forecast with confidence bands (P25/P75), and key event markers. The chart should make the forecast uncertainty visible, not hide it.
 
-2. **Strategy signal with attribution:** The BUY/HOLD/AVOID recommendation, plus a breakdown of what is driving it. "BUY because: model predicts +3.2% (40%), heuristic says undervalued at 22nd percentile (25%), news analysis flags India supply concerns (20%), sentiment bullish (15%)." Attribution builds trust.
+2. **Strategy signal with attribution:** The BUY/HOLD/AVOID recommendation, plus a breakdown of what is driving it. Example: "BUY because the LLM analyst synthesized a +3.2% market forecast, the model stack supports the move, the heuristic says cotton is not yet stretched, and news analysis flags India supply risk." Attribution builds trust without pretending the decision was a mechanical weighted average.
 
 3. **Model backtest results:** Visible to users, not hidden in a technical appendix. Show the walk-forward equity curve, directional accuracy by regime, and worst-case errors. Transparency about model limitations builds more trust than hiding them.
 

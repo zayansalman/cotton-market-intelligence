@@ -55,6 +55,29 @@ The monthly_plan pct values MUST sum to 100.`;
 
 type StrategyProvider = "huggingface" | "heuristic";
 
+interface AnalystMarketForecast {
+  current_price: number;
+  current_date: string;
+  forecasts: Array<{
+    horizon: string;
+    predicted_return: number;
+    predicted_price: number;
+    direction: "up" | "down" | "flat";
+  }>;
+  model: {
+    id: string;
+    name: string;
+    kind: "llm_synthesis" | "model_stack" | "llm_fallback" | "heuristic_fallback";
+    validation_note?: string;
+  };
+  confidence?: number;
+  reasoning?: string;
+  risk?: string;
+  key_factors?: Array<{ factor: string; impact: string; magnitude: string }>;
+  forecast_evidence?: unknown[];
+  evidence_assessment?: unknown[];
+}
+
 function mapSignalToReturn(signal: Strategy["signal"]): number {
   if (signal === "STRONG_BUY") return 0.03;
   if (signal === "BUY") return 0.015;
@@ -75,11 +98,60 @@ function attachConstraintFields(
   };
 }
 
+function attachUnifiedSignalFields(
+  strategy: ReturnType<typeof attachConstraintFields>,
+  unifiedSignal: UnifiedSignal | null
+) {
+  if (!unifiedSignal) return strategy;
+
+  return {
+    ...strategy,
+    signal: unifiedSignal.signal,
+    confidence: Math.round(unifiedSignal.confidence * 100),
+    decision_drivers: unifiedSignal.decision_drivers,
+    predicted_return: unifiedSignal.predicted_return,
+    news_override: unifiedSignal.news_override,
+  };
+}
+
+function confidence01(confidence: number | undefined): number | null {
+  if (confidence == null || !Number.isFinite(confidence)) return null;
+  return confidence > 1 ? confidence / 100 : confidence;
+}
+
+async function fetchAnalystMarketForecast(
+  req: Request
+): Promise<AnalystMarketForecast | null> {
+  const host = req.headers.get("host") ?? "localhost:3000";
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  const baseUrl = `${proto}://${host}`;
+
+  const res = await fetch(`${baseUrl}/api/prediction?horizon=21d`, {
+    headers: {
+      "User-Agent": "CMI strategy route",
+      Accept: "application/json",
+      "Accept-Language": "en",
+    },
+    cache: "no-store",
+  }).catch(() => null);
+
+  if (!res?.ok) return null;
+  const data = await res.json().catch(() => null);
+  if (
+    data?.forecasts?.[0]?.predicted_return == null ||
+    !data?.model?.kind
+  ) {
+    return null;
+  }
+  return data as AnalystMarketForecast;
+}
+
 function buildUserMessage(
   benchmarks: Benchmarks,
   headlines: Headline[],
   purchaserInput: PurchaserInput,
-  landedCost?: LandedCostResponse | null
+  landedCost?: LandedCostResponse | null,
+  marketForecast?: AnalystMarketForecast | null
 ): string {
   const tonnage = purchaserInput.demand.required_tonnes;
   const months = purchaserInput.demand.planning_horizon_months;
@@ -116,6 +188,27 @@ ${JSON.stringify(landedCost, null, 2)}
 
 Use landed cost context in your recommendation quality where relevant.`
     : "";
+  const marketForecastSection = marketForecast
+    ? `\n\nFINAL MARKET FORECAST:
+${JSON.stringify(
+  {
+    current_price: marketForecast.current_price,
+    current_date: marketForecast.current_date,
+    primary_forecast: marketForecast.forecasts[0],
+    model: marketForecast.model,
+    confidence: marketForecast.confidence,
+    reasoning: marketForecast.reasoning,
+    risk: marketForecast.risk,
+    key_factors: marketForecast.key_factors,
+    forecast_evidence: marketForecast.forecast_evidence,
+    evidence_assessment: marketForecast.evidence_assessment,
+  },
+  null,
+  2
+)}
+
+Use this final market forecast as the primary price-direction view for timing and pacing. If you recommend a different procurement signal than the forecast implies, explicitly explain the operational constraint or risk reason.`
+    : "";
 
   return `CURRENT MARKET DATA (Cotton #2 Futures):
 ${JSON.stringify(benchmarks, null, 2)}
@@ -131,7 +224,7 @@ ${JSON.stringify(purchaserInput, null, 2)}
 
 Treat the purchaser input as operational constraints that must shape timing, pacing, origin flexibility, supplier concentration, logistics, and credit risk.
 
-Analyze the market and generate a procurement strategy for this client.${landedCostSection}`;
+Analyze the market and generate a procurement strategy for this client.${marketForecastSection}${landedCostSection}`;
 }
 
 function resolveProvider(): StrategyProvider {
@@ -148,10 +241,7 @@ function resolveProvider(): StrategyProvider {
   return "heuristic";
 }
 
-async function runHuggingFaceStrategy(
-  userMsg: string,
-  _token: string
-): Promise<Strategy | null> {
+async function runHuggingFaceStrategy(userMsg: string): Promise<Strategy | null> {
   const { hfChatCompletion, parseJsonResponse } = await import("@/lib/hf/client");
 
   const text = await hfChatCompletion({
@@ -203,12 +293,14 @@ export async function POST(req: Request) {
       benchmarks,
       landedCost
     );
+    const marketForecast = await fetchAnalystMarketForecast(req);
 
     const userMsg = buildUserMessage(
       benchmarks,
       headlines,
       purchaserInput,
-      landedCost
+      landedCost,
+      marketForecast
     );
     const provider = resolveProvider();
 
@@ -216,6 +308,13 @@ export async function POST(req: Request) {
     let unifiedSignal: UnifiedSignal | null = null;
     try {
       const heuristicReturn = mapSignalToReturn(heuristicBaseResult.signal);
+      const primaryForecast = marketForecast?.forecasts?.[0] ?? null;
+      const primaryReturn =
+        primaryForecast && Number.isFinite(primaryForecast.predicted_return)
+          ? primaryForecast.predicted_return
+          : null;
+      const marketForecastConfidence = confidence01(marketForecast?.confidence);
+      const modelKind = marketForecast?.model?.kind;
 
       // Run sentiment analysis and deep news analysis in parallel
       const [sentimentResult, newsAnalysisResult] = await Promise.allSettled([
@@ -229,11 +328,17 @@ export async function POST(req: Request) {
       const newsAnalysis = newsAnalysisResult.status === "fulfilled" ? newsAnalysisResult.value : null;
 
       unifiedSignal = computeUnifiedSignal({
-        model_return: null,
-        model_confidence: null,
-        llm_return: null,
-        llm_confidence: null,
-        llm_reasoning: null,
+        model_return: modelKind === "model_stack" ? primaryReturn : null,
+        model_confidence: modelKind === "model_stack" ? marketForecastConfidence : null,
+        llm_return:
+          modelKind === "llm_synthesis" || modelKind === "llm_fallback"
+            ? primaryReturn
+            : null,
+        llm_confidence:
+          modelKind === "llm_synthesis" || modelKind === "llm_fallback"
+            ? marketForecastConfidence
+            : null,
+        llm_reasoning: marketForecast?.reasoning ?? null,
         heuristic_return: heuristicReturn,
         heuristic_signal: heuristicBaseResult.signal,
         sentiment_score: sentiment?.aggregate_score ?? null,
@@ -249,18 +354,31 @@ export async function POST(req: Request) {
       console.warn(`[strategy] Quota exceeded for request — degrading to heuristic. Reason: ${quota.reason}`);
       const result = { ...heuristicBaseResult };
       result.risk_factors = [
-        "AI quota exceeded — using statistical heuristic. Results may lack news context.",
+        "Strategy AI quota exceeded — using deterministic strategy generation with the latest market forecast overlay.",
         ...result.risk_factors,
       ];
-      return applyRateLimitHeaders(NextResponse.json(result), allHeaders);
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          attachUnifiedSignalFields(
+            attachConstraintFields(result, heuristicBaseResult),
+            unifiedSignal
+          )
+        ),
+        allHeaders
+      );
     }
 
     if (provider === "huggingface" && process.env.HF_TOKEN) {
-      const strategy = await runHuggingFaceStrategy(userMsg, process.env.HF_TOKEN);
+      const strategy = await runHuggingFaceStrategy(userMsg);
       if (strategy) {
         recordAiUsage(req);
         return applyRateLimitHeaders(
-          NextResponse.json(attachConstraintFields(strategy, heuristicBaseResult)),
+          NextResponse.json(
+            attachUnifiedSignalFields(
+              attachConstraintFields(strategy, heuristicBaseResult),
+              unifiedSignal
+            )
+          ),
           allHeaders
         );
       }
@@ -275,7 +393,12 @@ export async function POST(req: Request) {
       (heuristicResult as unknown as Record<string, unknown>).news_override = unifiedSignal.news_override;
     }
     return applyRateLimitHeaders(
-      NextResponse.json(heuristicResult),
+      NextResponse.json(
+        attachUnifiedSignalFields(
+          attachConstraintFields(heuristicResult, heuristicBaseResult),
+          unifiedSignal
+        )
+      ),
       allHeaders
     );
   } catch (e) {

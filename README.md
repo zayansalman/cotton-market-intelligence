@@ -1,6 +1,6 @@
 # Cotton Market Intelligence (CMI)
 
-A production cotton market intelligence platform that helps Bangladesh spinning mills decide **where the cotton market is likely heading** before turning that view into a practical procurement plan. The live app pulls Cotton #2 futures and cross-market factor data, computes statistical benchmarks, runs a TypeScript-native 8-model forecast stack for 5d/21d/63d horizons, uses Hugging Face AI as optional analyst context, and degrades to transparent heuristics when external AI or factor feeds are unavailable.
+A production cotton market intelligence platform that helps Bangladesh spinning mills decide **where the cotton market is likely heading** before turning that view into a practical procurement plan. The live app pulls Cotton #2 futures and cross-market factor data, computes statistical benchmarks, runs a TypeScript-native 8-model forecast stack, builds heuristic and sentiment candidates, then uses Qwen 2.5 7B as a final analyst synthesis layer when Hugging Face is configured. If hosted AI is unavailable, it degrades to transparent model-stack or heuristic outputs.
 
 **Live:** [cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app) | **Dev:** [cmi-notebooks-dev.vercel.app](https://cmi-notebooks-dev.vercel.app)
 
@@ -38,10 +38,10 @@ CMI answers three questions for a cotton procurement desk:
 | Capability | Description |
 |---|---|
 | **Price Intelligence** | Cotton #2 futures from Yahoo Finance. 1Y/5Y percentile rank, z-score, 30d/90d annualized volatility, 50d/200d MA, momentum. |
-| **Market Prediction (V3)** | 21-factor data pipeline, 48-feature engineering library, 8-model TypeScript stack, train/test validation, 5d/21d/63d forecasts, and 95% confidence bands. The live `/api/prediction` route uses the model stack first. |
-| **HF AI Context** | Optional DistilRoBERTa headline sentiment and Qwen 2.5 7B analyst reasoning. These enrich interpretation but do not replace validated model metadata. |
-| **Strategy Engine** | Constraint-aware procurement strategy via deterministic heuristic baseline plus optional Hugging Face strategy generation. Always produces a result. |
-| **Decision Transparency** | Forecast responses show primary source, validation note, top drivers, confidence band, sidecar AI forecasts, and sentiment context when available. |
+| **Market Prediction (V3)** | 21-factor data pipeline, 48-feature engineering library, 8-model TypeScript stack, heuristic candidate, sentiment context, LLM analyst synthesis, 5d/21d/63d support, and 95% confidence bands. |
+| **LLM Analyst Synthesis** | Qwen 2.5 7B ingests quant model output, heuristic forecast, sentiment, headlines, and cross-market evidence to produce the final market call, like a senior commodity analyst rather than a blind ensemble. |
+| **Strategy Engine** | Constraint-aware procurement strategy via deterministic heuristic baseline plus optional Hugging Face strategy generation. It now ingests the final analyst market forecast before producing timing and pacing. |
+| **Decision Transparency** | Forecast responses show final source, validation note, evidence ingested by the analyst, top drivers, confidence band, sentiment, and fallback status. |
 | **Optional Landed Cost Utility** | A separate `/api/landed-cost` calculator exists for scenario work, but the main app is intentionally focused on market direction because landed cost assumptions vary by buyer and trade lane. |
 | **Multi-Mill Portfolio** | Multiple mill configurations with aggregate portfolio views. |
 | **Alert System** | Signal change, volatility breach, key level break, price threshold alerts via webhook/email. |
@@ -80,9 +80,9 @@ CMI answers three questions for a cotton procurement desk:
            |                  |                  |
            v                  v                  v
   +----------------------------------------------------------+
-  |              PREDICTION RESPONSE                          |
-  |  primary forecast -> CI band -> top drivers -> sidecars    |
-  |  model-stack first; LLM then heuristic fallback            |
+  |              LLM ANALYST SYNTHESIS                         |
+  |  candidate forecasts + sentiment + news + cross-market     |
+  |  evidence -> one final price view + evidence assessment    |
   +---------------------------+------------------------------+
                               |
                               v
@@ -130,16 +130,16 @@ Every statistical choice has a reason. This section explains the "why" behind ea
 | **Annualized volatility (sqrt(252))** | Industry standard for daily data. 252 trading days per year. Allows direct comparison with options-implied vol and cross-asset vol benchmarks. |
 | **Exponential allocation weighting** | Front-loads tonnage on BUY signals, back-loads on AVOID. Reflects time value of procurement: locking in a good price today is worth more than the option to buy later at the same price, because you eliminate execution risk. |
 
-### Target Signal Weighting
+### Analyst Signal Synthesis
 
-`computeUnifiedSignal` supports the target four-leg ensemble below. The live prediction endpoint currently prioritizes the validated model-stack forecast and reports AI/sentiment as sidecar context; the strategy endpoint uses heuristic, sentiment, and news-analysis legs today.
+The system still tracks source influence for transparency, but the production decision pattern is analyst synthesis rather than a mechanical weighted average. The LLM sees each candidate forecast, the validation strength behind it, and the qualitative market context before making the final call.
 
-| Source | Target Weight | Rationale |
+| Source | Analyst Use | Rationale |
 |---|---|---|
-| **Model forecast** | 40% | Walk-forward validated against real out-of-sample data. Processes 48 features. Earns the highest weight through demonstrated performance. |
-| **Heuristic** | 25% | Simple, robust, never catastrophically wrong. Acts as a sanity check on complex models. |
-| **LLM analyst** | 20% | Qualitative context (geopolitics, weather, policy) that no statistical model can process. Valuable but noisy and not historically validated. |
-| **Sentiment** | 15% | Orthogonal to price data. Captures pre-price-move information from news. Low weight because NLP on short headlines is inherently noisy. |
+| **Model forecast** | Primary quantitative evidence | Walk-forward/train-test validated against real data. Processes 48 features and exposes top drivers. |
+| **Heuristic** | Sanity check | Simple, robust, never catastrophically wrong. Keeps the analyst anchored to price regime and volatility. |
+| **LLM analyst** | Final decision layer | Integrates quantified evidence with geopolitics, weather, policy, supply/demand, and market judgment. |
+| **Sentiment/news** | Qualitative catalyst evidence | Orthogonal to price data. Captures pre-price-move information from headlines, but is discounted when noisy. |
 
 ### Prediction Stack
 
@@ -157,20 +157,22 @@ Every statistical choice has a reason. This section explains the "why" behind ea
 
 ## Decision Pipeline
 
-CMI separates market prediction from procurement execution. The live prediction route first tries to run the local model stack against the latest factor matrix. Qwen and sentiment run as optional sidecars for qualitative context. If the validated model path cannot produce a plausible forecast, the endpoint falls back to Qwen, then to a deterministic momentum/mean-reversion heuristic. Fallback responses deliberately do **not** claim train/test model metrics.
+CMI separates market prediction from procurement execution, but the strategy route now consumes the final market forecast. The live prediction route builds candidate evidence first: model-stack forecast, heuristic forecast, sentiment/news context, cross-market moves, and benchmark state. Qwen then acts as the senior analyst and produces the final price view. If HF is unavailable, the endpoint falls back to the validated model stack, then to the deterministic heuristic. Fallback responses deliberately do **not** claim fake train/test model metrics.
 
 ```
-  Model stack forecast -- primary when plausible
-  Qwen analyst --------- sidecar, or fallback if model stack unavailable
-  Sentiment ------------ sidecar context
-  Heuristic ------------ final deterministic fallback
-                                      |
-                                      v
-                          forecast, confidence band,
-                          validation note, top drivers
+  Model stack forecast ---+
+  Heuristic forecast -----+
+  Sentiment/news ---------+--> Qwen analyst synthesis
+  Cross-market context ---+        |
+                                   v
+                          final forecast, confidence band,
+                          evidence assessment, top drivers
+                                   |
+                                   v
+                          strategy timing and pacing
 ```
 
-The strategy route still computes a transparent heuristic baseline and can call Hugging Face for richer strategy language when `HF_TOKEN` is configured. Its `computeUnifiedSignal` integration currently uses heuristic, sentiment, and news-analysis legs; wiring the live model-stack return into strategy is tracked separately so docs do not overstate runtime behavior.
+The strategy route computes the constraint-aware heuristic baseline, fetches the analyst market forecast, and gives both to the strategy LLM/heuristic path. Unified decision drivers now include the analyst forecast return when available.
 
 For the complete rationale behind every data source, feature, model, and weight, see [Model Decision Flow](wiki/Model-Decision-Flow.md).
 
@@ -201,8 +203,8 @@ The prediction system follows an 8-stage pipeline from raw data to chart overlay
   [6] Accuracy            Traffic-light rating (green/amber/red),
       Scorecard           go/no-go production criteria
           |
-  [7] Live Forecast       Champion model produces primary forecast when
-                          plausible; Qwen/heuristic are fallbacks
+  [7] Analyst Synthesis   Qwen ingests candidate forecasts, market context,
+                          sentiment, and news to produce final view
           |
   [8] Chart Overlay       Forecast line + confidence band on price chart
 ```
@@ -220,7 +222,7 @@ The prediction system follows an 8-stage pipeline from raw data to chart overlay
 | Gradient boosted stumps | Non-linear ensemble capturing feature interactions (depth 1) | O(n*p*T) |
 | Gradient boosted trees | Higher-order interactions via depth-3 trees | O(n*p*T) |
 
-Models are evaluated with held-out train/test metrics and walk-forward tooling. The live route reports the validation metrics only when the primary forecast came from the model stack; Qwen and heuristic fallback paths return explicit validation notes instead of placeholder statistics.
+Models are evaluated with held-out train/test metrics and walk-forward tooling. Those metrics are passed into the LLM as evidence and shown to the user. The final analyst synthesis does not pretend to have train/test accuracy; it reports its own confidence and preserves candidate model validation separately.
 
 ---
 
@@ -276,7 +278,7 @@ CMI is not a generic commodity tool. It encodes domain knowledge specific to Ban
 | Prediction features | 48 (across 9 groups) |
 | Prediction models | 8 |
 | Forecast factor slots | 21 |
-| Target ensemble sources | 4 (model, heuristic, LLM, sentiment) |
+| Analyst evidence sources | model stack, heuristic, sentiment, news, cross-market |
 | RSS feeds | 7 |
 | Security layers | 7 |
 
@@ -406,4 +408,4 @@ Production deployments should use GitHub Environment protection rules with requi
 
 **Zayan Khan** -- CS (Brunel University London, First-Class Honours), ex-Berenberg Bank quantitative research, Growth Manager at iFarmer (Bangladesh's largest agri-tech startup).
 
-This project reflects the intersection of quantitative finance, agricultural domain expertise, and production engineering. The statistical methods come from institutional commodity trading. The domain logic comes from working directly with Bangladesh spinning mills. The engineering decisions prioritize reliability (model-stack -> AI sidecar/fallback -> heuristic fallback), correctness (train/test validation, walk-forward tooling, release-lag alignment), and low operational overhead (serverless core with optional Supabase forecast history).
+This project reflects the intersection of quantitative finance, agricultural domain expertise, and production engineering. The statistical methods come from institutional commodity trading. The domain logic comes from working directly with Bangladesh spinning mills. The engineering decisions prioritize reliability (LLM analyst synthesis -> model-stack fallback -> heuristic fallback), correctness (train/test validation, walk-forward tooling, release-lag alignment), and low operational overhead (serverless core with optional Supabase forecast history).

@@ -33,6 +33,16 @@ interface MarketSentiment {
   neutral_pct: number;
 }
 
+interface ForecastEvidence {
+  source: string;
+  kind: "model_stack" | "heuristic" | "sentiment" | "news_context";
+  predicted_return: number | null;
+  direction: "up" | "down" | "flat";
+  confidence: number | null;
+  validation_note: string;
+  reasoning: string;
+}
+
 interface PredictionResponse {
   version: number;
   generated_at: string;
@@ -42,13 +52,14 @@ interface PredictionResponse {
   model: {
     id: string;
     name: string;
-    kind: "model_stack" | "llm_fallback" | "heuristic_fallback";
+    kind: "llm_synthesis" | "model_stack" | "llm_fallback" | "heuristic_fallback";
     train_samples: number | null;
     test_rmse: number | null;
     direction_accuracy: number | null;
     validation_note?: string;
   };
   top_drivers: { feature: string; importance: number }[];
+  forecast_evidence?: ForecastEvidence[];
   sentiment: MarketSentiment | null;
   hf_forecasts: HFForecast[];
 }
@@ -105,7 +116,7 @@ export default function ForecastOverlay() {
             Price Forecast
           </h3>
           <p className="text-xs text-zinc-400">
-            Model-stack forecast with optional HF analyst context
+            LLM analyst synthesis over quant, heuristic, sentiment, and market evidence
           </p>
         </div>
         <button
@@ -175,6 +186,37 @@ export default function ForecastOverlay() {
           </div>
 
           {/* Top drivers */}
+          {prediction.forecast_evidence && prediction.forecast_evidence.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-xs font-semibold text-zinc-400 uppercase mb-2">
+                Evidence Ingested by Analyst
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {prediction.forecast_evidence.map((evidence) => (
+                  <div
+                    key={`${evidence.kind}-${evidence.source}`}
+                    className="rounded-lg bg-zinc-700/30 border border-zinc-700 p-3"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-zinc-300">
+                        {evidence.source}
+                      </span>
+                      <span className={`text-xs font-semibold ${DIRECTION_STYLE[evidence.direction]}`}>
+                        {evidence.direction.toUpperCase()}
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-500 mt-1">
+                      {evidence.predicted_return != null
+                        ? `${(evidence.predicted_return * 100).toFixed(2)}% implied return. `
+                        : ""}
+                      {evidence.reasoning}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {prediction.top_drivers.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-zinc-400 uppercase mb-2">

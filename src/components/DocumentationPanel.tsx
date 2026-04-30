@@ -13,22 +13,22 @@ const DOCS = [
 Bangladesh spinning mills need to decide WHEN and HOW MUCH cotton to buy. Buy too early at high prices → margin squeeze. Buy too late → stockout. The optimal strategy depends on price levels, momentum, volatility regime, supply/demand fundamentals, and geopolitical context.
 
 ### Our Approach
-CMI starts with a market forecast, then turns that forecast into procurement timing:
+CMI works like a senior analyst desk: build multiple independent reads of the market, then ask the LLM analyst to synthesize the final call.
 
 **1. Quantitative Model Stack**
-The live forecast route runs an 8-model TypeScript stack over 48 engineered features. The chosen model reports real train/test metrics; if the stack cannot produce a plausible forecast, the app says so instead of inventing accuracy numbers.
+The forecast route runs an 8-model TypeScript stack over 48 engineered features. The chosen model reports real train/test metrics and becomes evidence for the analyst.
 
 **2. Statistical Heuristic**
-Price percentile rank + z-score + volatility regime -> signal. Simple, robust, deterministic. The honest baseline that any advanced model must beat.
+Price percentile rank + z-score + volatility regime -> candidate forecast. Simple, robust, deterministic. The honest baseline that any advanced model must beat.
 
-**3. HF Analyst Context**
-Qwen 2.5 7B Instruct analyzes headlines and cross-market context for forward-looking risks: geopolitics, weather, policy, supply disruptions, and demand shifts. It is sidecar context when the model stack works and a fallback when the stack cannot produce a plausible forecast.
+**3. HF Analyst Synthesis**
+Qwen 2.5 7B Instruct ingests the model-stack forecast, heuristic forecast, sentiment, headlines, and cross-market context. It makes the final analyst judgment instead of blindly averaging signals.
 
 **4. Sentiment Analysis**
 DistilRoBERTa financial sentiment on RSS headlines. Aggregate bullish/bearish/neutral score. Useful at the margin, but never presented as validated statistical accuracy.
 
 ### Fallback Discipline
-Forecasts degrade in order: model stack -> Qwen analyst -> deterministic heuristic. Fallback forecasts keep confidence bands, but validation metrics are shown only when they truly came from the model stack.`,
+Forecasts degrade in order: LLM analyst synthesis -> model stack -> deterministic heuristic. Fallback forecasts keep confidence bands, but validation metrics are shown only when they truly came from the model stack.`,
   },
   {
     id: "data",
@@ -102,7 +102,7 @@ Standard TA signals. RSI-14 captures overbought/oversold. MA cross = trend confi
 Cotton has strong seasonality: US planting Mar-May, harvest Oct-Dec.
 
 ### Sentiment (1): sentiment_score
-Reserved feature column plus live sidecar context from financial news headlines. The app does not claim historical model accuracy from headline sentiment unless that signal is actually present in the validated model path.`,
+Reserved feature column plus live evidence for the LLM analyst from financial news headlines. The app does not claim historical model accuracy from headline sentiment as a standalone signal.`,
   },
   {
     id: "models",
@@ -122,7 +122,7 @@ Reserved feature column plus live sidecar context from financial news headlines.
 - **Gradient Boosted Trees (depth 3)**: Deeper trees capture higher-order conditional interactions (e.g., high vol AND low momentum AND harvest season). Complementary signal to stumps.
 
 ### HF AI Context
-- **Qwen 2.5 7B Instruct**: LLM analyst for news reasoning and fallback price forecasting
+- **Qwen 2.5 7B Instruct**: Final analyst synthesis over candidate forecasts, news reasoning, and cross-market context
 - **DistilRoBERTa**: Financial sentiment classification on headlines
 
 ### Champion Selection
@@ -152,7 +152,7 @@ Composite score: -RMSE + 0.5 * direction_accuracy. Must beat naive on at least o
 | **Serverless Core** | Market data is fetched on demand. localStorage handles client scenarios and alerts. Optional Supabase stores forecast history when configured. |
 | **Zod** | Runtime + compile-time safety from one schema definition. |
 | **Recharts** | Declarative React charts. Good enough for area/bar/composed. |
-| **HF Inference** | Optional open-model analyst context without making the core forecast dependent on a paid AI provider. |
+| **HF Inference** | Optional final analyst synthesis. Without HF, the app degrades to model-stack or heuristic forecasts. |
 | **Vitest** | Native ESM, zero config, fast. |
 | **Vercel** | One-click deploy, edge network, serverless functions. |
 

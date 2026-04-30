@@ -2,8 +2,8 @@
  * Experimental HF-powered price forecasting helpers.
  *
  * These helpers are not the live primary `/api/prediction` path. The route
- * currently runs the local TypeScript model stack first, then uses Qwen as
- * analyst context/fallback, then deterministic heuristic fallback.
+ * currently builds local candidate forecasts first, then asks Qwen to
+ * synthesize the final analyst view, then falls back to model/heuristic output.
  *
  * 1. LLM Quant Analyst — Structured prompt to Qwen with price data,
  *    features, and sentiment for directional + magnitude forecast
@@ -13,7 +13,7 @@
  */
 
 import { fetchWithTimeout } from "@/lib/api-security";
-import type { Benchmarks, Headline } from "@/lib/types";
+import type { Benchmarks } from "@/lib/types";
 import type { MarketSentiment } from "./sentiment";
 import { hfChatCompletion, parseJsonResponse } from "./client";
 

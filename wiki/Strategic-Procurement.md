@@ -7,10 +7,10 @@ Core question:
 ## Strategy behavior
 
 The live app combines:
-1. **Price regime signals** (percentile, z-score, momentum)
-2. **Volatility-aware pacing**
-3. **Current headline context**
-4. **Optional HF reasoning with deterministic fallback**
+1. **Final analyst market forecast** from `/api/prediction`
+2. **Price regime signals** (percentile, z-score, momentum)
+3. **Volatility-aware pacing**
+4. **Current headline context**
 5. **Purchaser constraints** (V2: quality, timeline, commercial, finance, logistics)
 
 ## Input modes
@@ -73,7 +73,8 @@ See [Purchaser-Inputs-Bangladesh](Purchaser-Inputs-Bangladesh.md) for full field
 ### AI enhancement
 
 When an HF token is configured:
-- Model receives structured market + headline + constraint context
+- `/api/prediction` first synthesizes quant model, heuristic, sentiment, news, and cross-market evidence into a final analyst forecast
+- Strategy receives that final market forecast plus structured market, headline, and constraint context
 - Returns structured JSON strategy
 - If AI fails, system reverts to deterministic path
 

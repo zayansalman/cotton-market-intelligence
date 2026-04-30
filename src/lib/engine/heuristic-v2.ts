@@ -84,6 +84,16 @@ export function heuristicStrategyV2(
     tonnes: Math.round(tonnage * w),
     rationale: signalText[signal],
   }));
+  const lastPlan = plan[plan.length - 1];
+  if (lastPlan) {
+    const pctDrift =
+      Math.round((100 - plan.reduce((total, p) => total + p.pct, 0)) * 10) /
+      10;
+    const tonneDrift =
+      tonnage - plan.reduce((total, p) => total + p.tonnes, 0);
+    lastPlan.pct = Math.round((lastPlan.pct + pctDrift) * 10) / 10;
+    lastPlan.tonnes += tonneDrift;
+  }
 
   // Summary text
   const above50 = benchmarks.above_ma_50d ? "above" : "below";

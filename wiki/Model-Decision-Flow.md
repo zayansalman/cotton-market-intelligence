@@ -167,7 +167,7 @@ Raw data from the sources above is transformed into 48 features across 9 groups.
 |---|---|
 | `sentiment_score` | Aggregate news sentiment from DistilRoBERTa, scaled -1 to +1 |
 
-**Why it exists:** Sentiment captures information that is not yet reflected in price but is embedded in news text. In the live app it is primarily sidecar context and strategy/news input; it should not be interpreted as validated model accuracy unless it is present in a trained model path.
+**Why it exists:** Sentiment captures information that is not yet reflected in price but is embedded in news text. In the live app it is evidence for the analyst synthesis; it should not be interpreted as standalone validated model accuracy.
 
 ---
 
@@ -175,7 +175,7 @@ Raw data from the sources above is transformed into 48 features across 9 groups.
 
 Eight models, from trivially simple to moderately complex. The simple models exist to keep the complex ones honest.
 
-**Live route note:** `/api/prediction` now runs the 8-model TypeScript stack first and reports real train/test metrics when that stack produces the primary forecast. Qwen 2.5 7B runs as analyst context and fallback. If both are unavailable or implausible, a deterministic momentum/mean-reversion heuristic is used.
+**Live route note:** `/api/prediction` now builds candidate evidence from the 8-model TypeScript stack, heuristic forecast, sentiment, headlines, and cross-market context. Qwen 2.5 7B synthesizes those inputs into the final analyst forecast when HF is configured. If HF is unavailable, the route falls back to the model stack, then a deterministic momentum/mean-reversion heuristic.
 
 ### Baseline Models (4)
 
@@ -195,12 +195,12 @@ Eight models, from trivially simple to moderately complex. The simple models exi
 | **Gradient boosted stumps** | Gradient-boosted ensemble of depth-1 decision trees. | Captures non-linear interactions that ridge cannot -- for example, "high volatility AND low momentum" behaves differently from either condition alone. Depth-1 trees (stumps) are the minimum viable unit of non-linearity: enough to capture threshold effects without overfitting. Boosting ensembles hundreds of weak learners into a strong predictor. |
 | **Gradient boosted trees (depth 3)** | Gradient-boosted ensemble of depth-3 decision trees. | Captures higher-order conditional interactions that stumps miss -- for example, "high vol AND low momentum AND harvest season" is a three-way interaction that depth-1 trees cannot represent. Depth-3 provides complementary signal to stumps while remaining constrained enough to avoid overfitting at ~1000 samples. |
 
-### Hugging Face AI Context (non-blocking)
+### Hugging Face AI Context
 
 | Model | Role |
 |---|---|
-| **DistilRoBERTa** (financial sentiment) | Classifies news headlines as bullish/bearish/neutral. Produces sidecar context and feeds strategy/news analysis when available. |
-| **Qwen 2.5 7B Instruct** | Acts as an AI analyst: reads market data and headlines, produces a directional forecast with qualitative reasoning. Used as sidecar context and fallback in `/api/prediction`; strategy uses it when `HF_TOKEN` is configured. |
+| **DistilRoBERTa** (financial sentiment) | Classifies news headlines as bullish/bearish/neutral. Produces sentiment evidence for the final analyst synthesis. |
+| **Qwen 2.5 7B Instruct** | Acts as the senior analyst: reads model forecasts, heuristic signals, sentiment, market data, cross-market context, and headlines, then produces the final forecast and evidence assessment. |
 
 ---
 
@@ -238,35 +238,30 @@ Each model receives a traffic-light rating per horizon:
 - **Amber:** Beats naive on one metric but not all three.
 - **Red:** Fails to beat naive on any metric.
 
-The scorecard is the evaluation framework. The live route selects a champion from the trained stack and then applies plausibility checks before a forecast reaches the UI. Fallback paths explicitly report that no historical model validation metrics are claimed.
+The scorecard is the evaluation framework. The live route selects a champion from the trained stack, applies plausibility checks, then passes the candidate and its validation metrics into Qwen. Fallback paths explicitly report that no historical model validation metrics are claimed.
 
 ---
 
 ## 5. Signal Combination
 
-`computeUnifiedSignal` supports a four-source target ensemble. The live prediction endpoint currently treats the model-stack forecast as primary and shows Qwen/sentiment as sidecar context. The live strategy endpoint wires heuristic, sentiment, and news-analysis legs; the model and LLM forecast legs are not yet connected to strategy.
+The live prediction endpoint uses analyst synthesis, not a mechanical ensemble. `computeUnifiedSignal` remains useful for strategy transparency: it receives the final analyst forecast return when available, plus heuristic, sentiment, and news-analysis context.
 
-### Target Source Weights
+### Analyst Evidence Hierarchy
 
-| Source | Weight | Rationale |
+The live app no longer treats the sources as a fixed weighted average. The LLM analyst sees every candidate signal and decides how much to trust each one, similar to a senior commodity analyst reading a model pack before issuing a market call.
+
+| Source | Analyst Use | Rationale |
 |---|---|---|
-| **Model forecast** | 40% | Highest weight because it is the only source validated against real out-of-sample data via walk-forward. It processes 48 features across 9 groups and has proven it can beat the naive baseline. Data-rich, statistically tested. |
-| **Benchmarks/heuristic** | 25% | Simple percentile rank and z-score logic. Cannot be catastrophically wrong because the rules are transparent and well-understood. Acts as a sanity check on the model. If the model says BUY but the heuristic says AVOID, confidence drops. |
-| **LLM analyst** | 20% | Has access to qualitative context that no statistical model can process: geopolitical events, trade policy changes, weather forecasts, USDA report interpretation. The signal is valuable but noisy and not validated against historical data. |
-| **Sentiment** | 15% | Weakest signal individually but adds information orthogonal to price. Sentiment captures what the market is thinking before it finishes acting. Low weight because NLP on short headlines is inherently noisy. |
+| **Model forecast** | Primary quantitative evidence | Walk-forward/train-test validated against real data. Processes 48 features and exposes top drivers. |
+| **Benchmarks/heuristic** | Sanity check | Simple, robust, and transparent. Keeps the analyst anchored to price regime, momentum, and volatility. |
+| **Sentiment/news** | Catalyst evidence | Captures forward-looking narrative shifts that price data may not yet reflect, but is discounted when headlines are noisy. |
+| **Cross-market context** | Macro/fiber context | DXY, oil, grains, rates, freight, and FX help explain demand pressure, substitution effects, and risk appetite. |
 
-### Why These Specific Weights
-
-The weights follow an inverse relationship to model complexity and overfitting risk:
-
-- The heuristic (25%) is dead simple and cannot overfit. It gets a high weight relative to its sophistication because reliability matters more than precision.
-- The ML model (40%) is more complex but is walk-forward validated, which constrains overfitting risk. It earns the highest weight through demonstrated performance.
-- The LLM (20%) is the most complex component and the hardest to validate historically. It gets a meaningful but not dominant weight.
-- Sentiment (15%) is a single scalar derived from noisy NLP. Useful at the margin, dangerous if overweighted.
+The strategy overlay still has a weighted fallback mode for cases where the LLM synthesis is unavailable. When the LLM analyst forecast is available, its predicted return is treated as the primary market view because it already synthesized the evidence above.
 
 ### Confidence Computation
 
-Confidence is computed from source agreement, not from any single source's self-reported confidence:
+For LLM analyst synthesis, confidence starts with the analyst forecast confidence and is adjusted by agreement with the underlying evidence. For fallback mode, confidence is computed from source agreement:
 
 ```
 agreement = (sources agreeing with ensemble direction) / (total active sources)
@@ -283,9 +278,9 @@ The floor of 0.30 prevents zero-confidence signals. The cap of 0.95 prevents fal
 
 ### Signal Mapping
 
-The ensemble's weighted return maps to procurement signals:
+The final analyst return, or fallback overlay return when analyst synthesis is unavailable, maps to procurement signals:
 
-| Weighted Return | Signal |
+| Forecast Return | Signal |
 |---|---|
 | > +2% | STRONG_BUY |
 | > +0.5% | BUY |
@@ -294,13 +289,13 @@ The ensemble's weighted return maps to procurement signals:
 
 ### Graceful Degradation
 
-When a source is unavailable, the app degrades rather than blocking the user. `/api/prediction` uses model stack -> Qwen -> heuristic. `/api/strategy` uses Hugging Face when available and falls back to the constraint-aware heuristic.
+When a source is unavailable, the app degrades rather than blocking the user. `/api/prediction` uses LLM analyst synthesis -> model stack -> heuristic. `/api/strategy` consumes the analyst forecast when available, then falls back to the constraint-aware heuristic.
 
 ---
 
 ## 6. Strategy Generation
 
-The strategy engine translates price regime, volatility, headline context, and purchaser constraints into a concrete procurement plan. Full model-stack forecast wiring into strategy is a tracked next step, not current runtime behavior.
+The strategy engine translates the final analyst market forecast, price regime, volatility, headline context, and purchaser constraints into a concrete procurement plan.
 
 ### Signal to Allocation Timing
 
@@ -436,11 +431,11 @@ This allows any user to trace the final BUY signal back through the ensemble to 
            |                                     |
            v                                     v
   +----------------------------------------------------------+
-  |              Live Forecast + Strategy Signals              |
+  |              LLM Analyst Synthesis + Strategy Signals      |
   |                                                            |
-  |  Prediction: model stack primary, Qwen/heuristic fallback  |
-  |  Strategy: heuristic baseline + sentiment/news overlay     |
-  |  Target: four-source computeUnifiedSignal integration      |
+  |  Prediction: evidence -> Qwen final analyst forecast       |
+  |  Strategy: analyst forecast + constraints -> buy plan      |
+  |  Fallback: model stack -> heuristic when HF unavailable    |
   +---------------------------+------------------------------+
                               |
                               v

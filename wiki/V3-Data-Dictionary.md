@@ -60,7 +60,7 @@ Every factor is included because it captures a documented economic mechanism:
 
 ## Sentiment Feature
 
-`sentiment_score` is reserved in the feature matrix and live sentiment is returned as sidecar context from HF financial sentiment analysis. Do not interpret sentiment as validated model accuracy unless it is actually present in a trained feature path.
+`sentiment_score` is reserved in the feature matrix and live sentiment is returned as evidence for the LLM analyst synthesis from HF financial sentiment analysis. Do not interpret sentiment as standalone validated model accuracy.
 
 ## Release Lag
 

@@ -68,11 +68,11 @@ Every significant engineering trade-off in Cotton Market Intelligence, with rati
 
 **Decision**: Hugging Face Inference API is the optional AI provider. Heuristic is always available. OpenAI is documented as not currently wired into the runtime.
 
-**Why**: Qwen 2.5 7B Instruct is strong enough for structured JSON strategy generation and qualitative market commentary. Keeping AI optional prevents provider outages or quota limits from blocking the procurement workflow. The validated local model stack remains the primary live prediction path.
+**Why**: Qwen 2.5 7B Instruct is strong enough for structured JSON strategy generation and final analyst synthesis. It can ingest validated model output, heuristic signals, sentiment, news, and cross-market context, then explain how it weighed conflicting evidence. Keeping AI optional prevents provider outages or quota limits from blocking the procurement workflow.
 
 **Alternatives considered**: OpenAI-first (rejected for now: cost scales with usage, vendor lock-in, and no execution path exists in the current strategy route), Anthropic Claude (rejected: higher cost per token for structured output), local model inference via llama.cpp (rejected: Vercel serverless has no GPU, cold start would be seconds).
 
-**Trade-offs**: Hugging Face Inference API has variable latency (cold model loading can take 20-30 seconds on first call). The 30-second timeout handles this. Model quality depends on what is available on the hosted tier. If HF is down, the system falls through to the heuristic. The heuristic is always available and provides a transparent baseline.
+**Trade-offs**: Hugging Face Inference API has variable latency (cold model loading can take 20-30 seconds on first call). The 30-second timeout handles this. Model quality depends on what is available on the hosted tier. If HF is down, the system falls through to the model stack and then the heuristic. The heuristic is always available and provides a transparent baseline.
 
 ---
 

@@ -1,5 +1,5 @@
 /**
- * /api/prediction — model-stack cotton price forecast with analyst sidecar.
+ * /api/prediction — LLM analyst synthesis over all forecast evidence.
  *
  * The local TypeScript model stack sees the full historical feature matrix:
  * - Cotton price + statistical benchmarks (percentile, z-score, vol, MAs)
@@ -8,9 +8,9 @@
  * - FX rates (CNY, INR, BDT)
  * - News headlines with NLP sentiment scores
  *
- * HF Qwen runs in parallel as qualitative analyst context. If the model
- * stack cannot produce a plausible forecast, the route falls back to the
- * LLM forecast, then to a deterministic momentum/mean-reversion heuristic.
+ * HF Qwen receives model-stack, heuristic, sentiment, news, and cross-market
+ * evidence and makes the final analyst call. If hosted AI is unavailable,
+ * the route falls back to the model stack, then deterministic heuristic.
  *
  * GET ?horizon=21d
  */
@@ -57,7 +57,7 @@ interface PredictionDriver {
 interface PredictionModelMetadata {
   id: string;
   name: string;
-  kind: "model_stack" | "llm_fallback" | "heuristic_fallback";
+  kind: "llm_synthesis" | "model_stack" | "llm_fallback" | "heuristic_fallback";
   train_samples: number | null;
   test_samples: number | null;
   test_mae: number | null;
@@ -88,6 +88,43 @@ interface LlmForecast {
   risk: string;
   methodology: Record<string, { signal: string; observation: string; weight: string }> | null;
   key_factors: { factor: string; impact: string; magnitude: string }[];
+}
+
+interface EvidenceAssessment {
+  source: string;
+  stance: "support" | "contradict" | "neutral";
+  influence: "high" | "medium" | "low";
+  rationale: string;
+}
+
+interface AnalystSynthesisForecast extends LlmForecast {
+  evidence_assessment: EvidenceAssessment[];
+}
+
+interface ForecastEvidence {
+  source: string;
+  kind: "model_stack" | "heuristic" | "sentiment" | "news_context";
+  predicted_price: number | null;
+  predicted_return: number | null;
+  direction: "up" | "down" | "flat";
+  confidence: number | null;
+  validation_note: string;
+  reasoning: string;
+  top_drivers?: PredictionDriver[];
+}
+
+interface DeterministicForecast {
+  predicted_price: number;
+  predicted_return: number;
+  lower_price: number;
+  upper_price: number;
+  direction: "up" | "down" | "flat";
+  confidence: number;
+  reasoning: string;
+  risk: string;
+  model: PredictionModelMetadata;
+  key_factors: LlmForecast["key_factors"];
+  top_drivers: PredictionDriver[];
 }
 
 async function fetchQuickQuote(ticker: string, label: string): Promise<QuickQuote> {
@@ -260,13 +297,161 @@ async function runModelStackForecast(
   };
 }
 
+function buildHeuristicForecast(
+  horizon: Horizon,
+  currentPrice: number,
+  benchmarks: Benchmarks
+): DeterministicForecast {
+  const momentum = benchmarks.change_30d_pct / 100;
+  const meanRev = (0.5 - benchmarks.pct_rank_1y) * 0.03;
+  const blend = momentum * 0.6 + meanRev * 0.4;
+  const cappedReturn = Math.max(-0.08, Math.min(0.08, blend));
+  const predictedPrice =
+    Math.round(currentPrice * (1 + cappedReturn) * 10000) / 10000;
+  const horizonDays = horizonDaysFor(horizon);
+  const ciWidth =
+    (benchmarks.vol_30d_ann / 100) * Math.sqrt(horizonDays / 252) * 1.96;
+  const direction = directionFromReturn(cappedReturn);
+  const topDrivers: PredictionDriver[] = [
+    { feature: "30d_momentum", importance: 0.7 },
+    { feature: "1y_percentile_rank", importance: 0.65 },
+    { feature: "z_score_1y", importance: 0.55 },
+    { feature: "30d_volatility", importance: 0.45 },
+  ];
+
+  return {
+    predicted_price: predictedPrice,
+    predicted_return: Math.round(cappedReturn * 100000) / 100000,
+    lower_price: Math.round(currentPrice * (1 - ciWidth) * 10000) / 10000,
+    upper_price: Math.round(currentPrice * (1 + ciWidth) * 10000) / 10000,
+    direction,
+    confidence: 35,
+    reasoning:
+      `Heuristic candidate: momentum (${benchmarks.change_30d_pct > 0 ? "+" : ""}${benchmarks.change_30d_pct.toFixed(1)}% 30d) ` +
+      `blended with mean reversion (${(benchmarks.pct_rank_1y * 100).toFixed(0)}th pct).`,
+    risk:
+      "Deterministic heuristic only; it cannot reason about new supply, demand, policy, or weather information.",
+    model: {
+      id: "heuristic",
+      name: "Heuristic fallback",
+      kind: "heuristic_fallback",
+      train_samples: null,
+      test_samples: null,
+      test_mae: null,
+      test_rmse: null,
+      direction_accuracy: null,
+      validation_note:
+        "Deterministic fallback; confidence is heuristic and not historical model accuracy.",
+    },
+    key_factors: topDrivers.map((driver) => ({
+      factor: driver.feature,
+      impact: direction === "down" ? "bearish" : direction === "up" ? "bullish" : "neutral",
+      magnitude: driver.importance >= 0.65 ? "high" : "medium",
+    })),
+    top_drivers: topDrivers,
+  };
+}
+
+function confidence01(confidence: number | null | undefined): number | null {
+  if (confidence == null || !Number.isFinite(confidence)) return null;
+  return confidence > 1 ? confidence / 100 : confidence;
+}
+
+function buildForecastEvidence(
+  modelStackForecast: ModelStackForecast | null,
+  heuristicForecast: DeterministicForecast,
+  sentiment: Awaited<ReturnType<typeof analyzeHeadlineSentiment>> | null
+): ForecastEvidence[] {
+  const evidence: ForecastEvidence[] = [];
+
+  if (modelStackForecast) {
+    evidence.push({
+      source: `Quant model stack (${modelStackForecast.model.name})`,
+      kind: "model_stack",
+      predicted_price: modelStackForecast.predicted_price,
+      predicted_return: modelStackForecast.predicted_return,
+      direction: modelStackForecast.direction,
+      confidence: confidence01(modelStackForecast.confidence),
+      validation_note: modelStackForecast.model.validation_note,
+      reasoning: modelStackForecast.reasoning,
+      top_drivers: modelStackForecast.top_drivers,
+    });
+  }
+
+  evidence.push({
+    source: "Statistical heuristic",
+    kind: "heuristic",
+    predicted_price: heuristicForecast.predicted_price,
+    predicted_return: heuristicForecast.predicted_return,
+    direction: heuristicForecast.direction,
+    confidence: confidence01(heuristicForecast.confidence),
+    validation_note: heuristicForecast.model.validation_note,
+    reasoning: heuristicForecast.reasoning,
+    top_drivers: heuristicForecast.top_drivers,
+  });
+
+  if (sentiment) {
+    const sentReturn = sentiment.aggregate_score * 0.02;
+    evidence.push({
+      source: "News sentiment",
+      kind: "sentiment",
+      predicted_price: null,
+      predicted_return: Math.round(sentReturn * 100000) / 100000,
+      direction: directionFromReturn(sentReturn),
+      confidence: confidence01(sentiment.confidence),
+      validation_note:
+        "Headline sentiment is qualitative context, not a standalone validated price model.",
+      reasoning:
+        `${sentiment.label} headline tone across ${sentiment.n_headlines} headlines ` +
+        `(score ${sentiment.aggregate_score.toFixed(2)}).`,
+    });
+  }
+
+  return evidence;
+}
+
+function confidenceIntervalForFinalForecast(
+  predictedPrice: number,
+  currentPrice: number,
+  benchmarks: Benchmarks,
+  horizon: Horizon,
+  modelStackForecast: ModelStackForecast | null
+): { lowerPrice: number; upperPrice: number } {
+  const horizonDays = horizonDaysFor(horizon);
+  const realizedVolInterval =
+    currentPrice *
+    (benchmarks.vol_30d_ann / 100) *
+    Math.sqrt(horizonDays / 252) *
+    1.96;
+  const modelInterval = modelStackForecast
+    ? Math.max(
+        Math.abs(modelStackForecast.upper_price - modelStackForecast.predicted_price),
+        Math.abs(modelStackForecast.predicted_price - modelStackForecast.lower_price)
+      )
+    : 0;
+  const synthesisDiscretion = Math.abs(predictedPrice - currentPrice) * 0.35;
+  const interval = Math.max(
+    realizedVolInterval,
+    modelInterval,
+    synthesisDiscretion,
+    currentPrice * 0.005
+  );
+
+  return {
+    lowerPrice: Math.round(Math.max(0.01, predictedPrice - interval) * 10000) / 10000,
+    upperPrice: Math.round((predictedPrice + interval) * 10000) / 10000,
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /*  System prompt                                                      */
 /* ------------------------------------------------------------------ */
 
 const PRICE_PREDICTION_PROMPT = `You are a senior cotton commodity analyst at Glencore/Cargill/Louis Dreyfus.
 
-You have the FULL market picture — cotton data, cross-market signals, news, and sentiment. Your job: predict the price AND show your complete analytical work.
+You have the FULL market picture: cotton data, cross-market signals, candidate model forecasts, heuristic signals, news, and sentiment.
+
+Your job is to act like a top human analyst: synthesize all evidence into ONE final price forecast. Do not blindly average the candidate forecasts. Treat the validated quant model as strong evidence, but override it when market context, news, or cross-market signals justify doing so. If evidence conflicts, explicitly explain the conflict and which evidence you trust most.
 
 ANALYTICAL FRAMEWORK:
 1. MOMENTUM: 30d/90d changes, MAs. Trend continuation is the base case until broken.
@@ -299,6 +484,9 @@ Return ONLY valid JSON:
   "reasoning": "<3-4 sentence summary tying it all together>",
   "key_factors": [
     {"factor": "<specific signal>", "impact": "bullish" | "bearish", "magnitude": "high" | "medium" | "low"}
+  ],
+  "evidence_assessment": [
+    {"source": "<candidate forecast or signal>", "stance": "support" | "contradict" | "neutral", "influence": "high" | "medium" | "low", "rationale": "<why you used or discounted it>"}
   ],
   "risk": "<what could make this prediction wrong>"
 }`;
@@ -382,7 +570,7 @@ export async function GET(req: Request) {
       ? `NLP Sentiment: ${sentiment.label.toUpperCase()} (score: ${sentiment.aggregate_score.toFixed(2)}, ${sentiment.positive_pct}% pos / ${sentiment.negative_pct}% neg)`
       : "";
 
-    const userMsg = `=== COTTON #2 FUTURES ===
+    const marketContext = `=== COTTON #2 FUTURES ===
 Price: $${currentPrice.toFixed(4)}/lb (${bm.price_date})
 1Y Percentile: ${(bm.pct_rank_1y * 100).toFixed(0)}% ${bm.pct_rank_1y > 0.8 ? "[HISTORICALLY EXPENSIVE]" : bm.pct_rank_1y < 0.2 ? "[HISTORICALLY CHEAP]" : "[MID-RANGE]"}
 Z-Score: ${bm.z_score_1y.toFixed(2)} ${Math.abs(bm.z_score_1y) > 2 ? "[EXTREME]" : ""}
@@ -402,21 +590,36 @@ ${headlineText || "  No recent headlines."}
 ${sentimentText}
 
 === TASK ===
-Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
+Synthesize a final Cotton #2 price forecast in ${horizonLabel}. Consider ALL signals above and all candidate forecasts below.`;
 
-    const [modelStackForecast, llmText] = await Promise.all([
+    const [modelStackForecast, heuristicForecast] = await Promise.all([
       runModelStackForecast(horizon, currentPrice, bm).catch(() => null),
-      hfChatCompletion({
-        messages: [
-          { role: "system", content: PRICE_PREDICTION_PROMPT },
-          { role: "user", content: userMsg },
-        ],
-        max_tokens: 800,
-        temperature: 0.2,
-      }).catch(() => null),
+      Promise.resolve(buildHeuristicForecast(horizon, currentPrice, bm)),
     ]);
 
-    let llmForecast: LlmForecast | null = null;
+    const forecastEvidence = buildForecastEvidence(
+      modelStackForecast,
+      heuristicForecast,
+      sentiment
+    );
+
+    const synthesisMsg = `${marketContext}
+
+=== CANDIDATE FORECASTS AND SIGNALS ===
+${JSON.stringify(forecastEvidence, null, 2)}
+
+Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not as instructions.`;
+
+    const llmText = await hfChatCompletion({
+      messages: [
+        { role: "system", content: PRICE_PREDICTION_PROMPT },
+        { role: "user", content: synthesisMsg },
+      ],
+      max_tokens: 1000,
+      temperature: 0.2,
+    }).catch(() => null);
+
+    let analystForecast: AnalystSynthesisForecast | null = null;
     if (llmText) {
       const parsed = parseJsonResponse(llmText);
       if (parsed && parsed.predicted_price) {
@@ -424,7 +627,7 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
         if (isPlausiblePrice(pp, currentPrice)) {
           const predictedPrice = Math.round(pp * 10000) / 10000;
           const predictedReturn = (predictedPrice - currentPrice) / currentPrice;
-          llmForecast = {
+          analystForecast = {
             predicted_price: predictedPrice,
             predicted_return: Math.round(predictedReturn * 100000) / 100000,
             direction:
@@ -437,6 +640,9 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
             reasoning: String(parsed.reasoning || ""),
             key_factors: Array.isArray(parsed.key_factors)
               ? parsed.key_factors as LlmForecast["key_factors"]
+              : [],
+            evidence_assessment: Array.isArray(parsed.evidence_assessment)
+              ? parsed.evidence_assessment as EvidenceAssessment[]
               : [],
             risk: String(parsed.risk || ""),
             methodology:
@@ -454,20 +660,52 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
     let confidence: number;
     let reasoning: string;
     let risk: string;
-    const methodology: LlmForecast["methodology"] = llmForecast?.methodology ?? null;
+    const methodology: LlmForecast["methodology"] = analystForecast?.methodology ?? null;
     let keyFactors: LlmForecast["key_factors"] = [];
     let topDrivers: PredictionDriver[] = [];
     let model: PredictionModelMetadata | null = modelStackForecast?.model ?? null;
     let lowerPrice: number;
     let upperPrice: number;
 
-    if (modelStackForecast) {
+    if (analystForecast) {
+      predictedPrice = analystForecast.predicted_price;
+      predictedReturn = analystForecast.predicted_return;
+      direction = analystForecast.direction;
+      confidence = analystForecast.confidence;
+      reasoning = analystForecast.reasoning;
+      risk = analystForecast.risk;
+      keyFactors = analystForecast.key_factors;
+      topDrivers = forecastEvidence
+        .flatMap((evidence) => evidence.top_drivers ?? [])
+        .slice(0, 8);
+      const interval = confidenceIntervalForFinalForecast(
+        predictedPrice,
+        currentPrice,
+        bm,
+        horizon,
+        modelStackForecast
+      );
+      lowerPrice = interval.lowerPrice;
+      upperPrice = interval.upperPrice;
+      model = {
+        id: "llm_synthesis",
+        name: "LLM analyst synthesis (Qwen 2.5 7B)",
+        kind: "llm_synthesis",
+        train_samples: null,
+        test_samples: null,
+        test_mae: null,
+        test_rmse: null,
+        direction_accuracy: null,
+        validation_note:
+          "Final LLM analyst synthesis over quant model, heuristic, sentiment, news, and cross-market evidence. Candidate model validation is shown in forecast_evidence.",
+      };
+    } else if (modelStackForecast) {
       predictedPrice = modelStackForecast.predicted_price;
       predictedReturn = modelStackForecast.predicted_return;
       direction = modelStackForecast.direction;
       confidence = modelStackForecast.confidence;
       reasoning = modelStackForecast.reasoning;
-      risk = llmForecast?.risk || modelStackForecast.risk;
+      risk = modelStackForecast.risk;
       topDrivers = modelStackForecast.top_drivers;
       keyFactors = topDrivers.map((driver) => ({
         factor: driver.feature,
@@ -481,58 +719,18 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
       }));
       lowerPrice = modelStackForecast.lower_price;
       upperPrice = modelStackForecast.upper_price;
-    } else if (llmForecast) {
-      predictedPrice = llmForecast.predicted_price;
-      predictedReturn = llmForecast.predicted_return;
-      direction = llmForecast.direction;
-      confidence = llmForecast.confidence;
-      reasoning = llmForecast.reasoning;
-      risk = llmForecast.risk;
-      keyFactors = llmForecast.key_factors;
-      const source = "LLM Analyst (Qwen 2.5 7B)";
-      const horizonDays = horizonDaysFor(horizon);
-      const ciWidth = (bm.vol_30d_ann / 100) * Math.sqrt(horizonDays / 252) * 1.96;
-      lowerPrice = Math.round(currentPrice * (1 - ciWidth) * 10000) / 10000;
-      upperPrice = Math.round(currentPrice * (1 + ciWidth) * 10000) / 10000;
-      model = {
-        id: "llm_analyst",
-        name: source,
-        kind: "llm_fallback",
-        train_samples: null,
-        test_samples: null,
-        test_mae: null,
-        test_rmse: null,
-        direction_accuracy: null,
-        validation_note:
-          "HF LLM fallback; no statistical train/test validation metrics are claimed.",
-      };
     } else {
-      const momentum = bm.change_30d_pct / 100;
-      const meanRev = (0.5 - bm.pct_rank_1y) * 0.03;
-      const blend = momentum * 0.6 + meanRev * 0.4;
-      const cappedReturn = Math.max(-0.08, Math.min(0.08, blend));
-      predictedPrice = Math.round(currentPrice * (1 + cappedReturn) * 10000) / 10000;
-      direction = cappedReturn > 0.003 ? "up" : cappedReturn < -0.003 ? "down" : "flat";
-      predictedReturn = (predictedPrice - currentPrice) / currentPrice;
-      confidence = 35;
-      reasoning = `Heuristic: momentum (${bm.change_30d_pct > 0 ? "+" : ""}${bm.change_30d_pct.toFixed(1)}% 30d) + mean reversion (${(bm.pct_rank_1y * 100).toFixed(0)}th pct). LLM unavailable.`;
-      risk = "Heuristic forecast only; model stack and LLM analyst were unavailable.";
-      const horizonDays = horizonDaysFor(horizon);
-      const ciWidth = (bm.vol_30d_ann / 100) * Math.sqrt(horizonDays / 252) * 1.96;
-      lowerPrice = Math.round(currentPrice * (1 - ciWidth) * 10000) / 10000;
-      upperPrice = Math.round(currentPrice * (1 + ciWidth) * 10000) / 10000;
-      model = {
-        id: "heuristic",
-        name: "Heuristic fallback",
-        kind: "heuristic_fallback",
-        train_samples: null,
-        test_samples: null,
-        test_mae: null,
-        test_rmse: null,
-        direction_accuracy: null,
-        validation_note:
-          "Deterministic fallback; confidence is heuristic and not historical model accuracy.",
-      };
+      predictedPrice = heuristicForecast.predicted_price;
+      predictedReturn = heuristicForecast.predicted_return;
+      direction = heuristicForecast.direction;
+      confidence = heuristicForecast.confidence;
+      reasoning = `${heuristicForecast.reasoning} LLM synthesis and model stack were unavailable.`;
+      risk = heuristicForecast.risk;
+      keyFactors = heuristicForecast.key_factors;
+      topDrivers = heuristicForecast.top_drivers;
+      lowerPrice = heuristicForecast.lower_price;
+      upperPrice = heuristicForecast.upper_price;
+      model = heuristicForecast.model;
     }
 
     const responseModel: PredictionModelMetadata = model ?? {
@@ -578,19 +776,12 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
       methodology,
       key_factors: keyFactors,
       top_drivers: topDrivers,
+      forecast_evidence: forecastEvidence,
+      evidence_assessment: analystForecast?.evidence_assessment ?? [],
       // What the LLM saw (transparency)
       cross_market_signals: (crossMarketQuotes as QuickQuote[]).filter((q) => q.price != null),
       sentiment,
-      hf_forecasts: llmForecast ? [{
-        provider: "hf_llm",
-        horizon,
-        predicted_price: llmForecast.predicted_price,
-        predicted_return: llmForecast.predicted_return,
-        direction: llmForecast.direction,
-        confidence: llmForecast.confidence / 100,
-        model_used: "Qwen/Qwen2.5-7B-Instruct",
-        reasoning: llmForecast.reasoning,
-      }] : [],
+      hf_forecasts: [],
     };
 
     // Fire-and-forget: persist prediction to Supabase for accuracy tracking

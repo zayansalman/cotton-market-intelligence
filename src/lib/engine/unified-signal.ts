@@ -1,15 +1,10 @@
 /**
- * Unified prediction signal helper for the target all-source ensemble (#40).
+ * Unified strategy signal helper.
  *
- * The live strategy route currently calls this with the available heuristic,
- * sentiment, and news-analysis inputs. Model and LLM forecast inputs are
- * supported here but not yet fully wired into `/api/strategy`.
- *
- * Target ensemble weighting:
- * - Model forecast: 40% (walk-forward validated, most data)
- * - LLM analyst: 20% (qualitative context, news interpretation)
- * - Benchmarks/heuristic: 25% (simple, robust baseline)
- * - Sentiment: 15% (weakest signal but adds non-price information)
+ * When an LLM analyst synthesis return is available, it is the primary market
+ * view because it already ingested the model stack, heuristic, sentiment, news,
+ * and cross-market context. The weighted overlay below is retained for
+ * fallback paths and for driver attribution when analyst synthesis is absent.
  */
 
 import type { Strategy } from "@/lib/types";
@@ -40,7 +35,7 @@ export interface DecisionDriver {
 
 const WEIGHTS = {
   model: 0.40,
-  llm: 0.20,
+  llm: 0.50,
   heuristic: 0.25,
   sentiment: 0.15,
 };
@@ -60,6 +55,13 @@ interface SignalInput {
   sentiment_score: number | null;
   /** Deep LLM news analysis with forward-looking reasoning. null if unavailable. */
   news_analysis: NewsAnalysis | null;
+}
+
+function signalFromReturn(value: number): Strategy["signal"] {
+  if (value > 0.02) return "STRONG_BUY";
+  if (value > 0.005) return "BUY";
+  if (value < -0.005) return "AVOID";
+  return "HOLD";
 }
 
 export function computeUnifiedSignal(input: SignalInput): UnifiedSignal {
@@ -133,7 +135,7 @@ export function computeUnifiedSignal(input: SignalInput): UnifiedSignal {
     const newsDir = newsAnalysis.outlook === "bullish" ? "up"
       : newsAnalysis.outlook === "bearish" ? "down" : "flat";
 
-    // News analysis gets 20% weight in the ensemble (taken from heuristic and sentiment)
+    // News analysis participates in the fallback overlay and driver attribution.
     const newsWeight = 0.20;
     drivers.push({
       source: "News Analysis (LLM)",
@@ -152,7 +154,7 @@ export function computeUnifiedSignal(input: SignalInput): UnifiedSignal {
     // and confidence is high enough, shift the ensemble strongly toward news view
     if (newsAnalysis.override_statistical && newsAnalysis.confidence >= 0.6) {
       newsOverride = true;
-      // Add extra weight to news direction (effectively 40% total news influence)
+      // Add extra fallback-overlay influence to urgent forward-looking news.
       weightedReturn += 0.20 * newsAnalysis.implied_return;
       totalWeight += 0.20;
       drivers.push({
@@ -165,18 +167,32 @@ export function computeUnifiedSignal(input: SignalInput): UnifiedSignal {
     }
   }
 
+  if (input.llm_return != null) {
+    const direction: UnifiedSignal["direction"] =
+      input.llm_return > 0.005 ? "up" : input.llm_return < -0.005 ? "down" : "flat";
+    const agreement = drivers.length > 0
+      ? drivers.filter((d) => d.direction === direction).length / drivers.length
+      : 0.5;
+    const analystConfidence = input.llm_confidence ?? 0.5;
+    const confidence = Math.min(
+      0.95,
+      Math.max(0.30, analystConfidence * 0.75 + agreement * 0.25)
+    );
+
+    return {
+      direction,
+      predicted_return: Math.round(input.llm_return * 100000) / 100000,
+      confidence: Math.round(confidence * 100) / 100,
+      news_override: newsOverride,
+      decision_drivers: drivers,
+      signal: signalFromReturn(input.llm_return),
+    };
+  }
+
   // Normalize
   const ensembleReturn = totalWeight > 0 ? weightedReturn / totalWeight : 0;
   const direction: UnifiedSignal["direction"] =
     ensembleReturn > 0.005 ? "up" : ensembleReturn < -0.005 ? "down" : "flat";
-
-  // Map to strategy signal
-  let signal: Strategy["signal"];
-  if (ensembleReturn > 0.02) signal = "STRONG_BUY";
-  else if (ensembleReturn > 0.005) signal = "BUY";
-  else if (ensembleReturn < -0.02) signal = "AVOID";
-  else if (ensembleReturn < -0.005) signal = "AVOID";
-  else signal = "HOLD";
 
   // Confidence from agreement of sources
   const directions = drivers.map((d) => d.direction);
@@ -194,6 +210,6 @@ export function computeUnifiedSignal(input: SignalInput): UnifiedSignal {
     confidence: Math.round(confidence * 100) / 100,
     news_override: newsOverride,
     decision_drivers: drivers,
-    signal,
+    signal: signalFromReturn(ensembleReturn),
   };
 }

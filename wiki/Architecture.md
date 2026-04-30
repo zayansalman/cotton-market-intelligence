@@ -6,9 +6,9 @@ Cotton Market Intelligence (CMI) is a single-deploy Next.js 16 application that 
 
 ## Current Decision Pipeline
 
-The live app is market-prediction first. `/api/prediction` runs the TypeScript model stack as the primary forecast path, then uses Hugging Face Qwen as analyst context or fallback, then falls back to a deterministic heuristic. `/api/strategy` remains procurement-plan focused: it always computes the constraint-aware heuristic baseline and can call Hugging Face for richer strategy language when configured.
+The live app is market-prediction first. `/api/prediction` builds candidate forecasts from the TypeScript model stack, deterministic heuristic, sentiment, headlines, and cross-market signals, then uses Hugging Face Qwen as the final analyst synthesis layer when configured. If hosted AI is unavailable, it falls back to the model stack and then to the deterministic heuristic.
 
-`computeUnifiedSignal` exists as the target four-leg ensemble surface, but the strategy route currently wires heuristic, sentiment, and news-analysis legs only. Model-stack and LLM forecast legs are intentionally documented as not fully wired into strategy yet.
+`/api/strategy` consumes the final analyst market forecast before producing procurement timing. `computeUnifiedSignal` now receives the forecast return as the LLM/model leg when available, plus heuristic, sentiment, and news-analysis context.
 
 ### End-to-End Flow
 
@@ -33,9 +33,9 @@ The live app is market-prediction first. `/api/prediction` runs the TypeScript m
         |                     |                     |
         v                     v                     v
   +-----------------------------------------------------------+
-  |             LIVE PREDICTION RESPONSE                        |
-  |  model-stack primary -> Qwen fallback -> heuristic fallback |
-  |  -> forecast, confidence band, validation note, drivers     |
+  |             LLM ANALYST SYNTHESIS                          |
+  |  candidate forecasts + validation notes + market context   |
+  |  -> final forecast, confidence band, evidence assessment   |
   +----------------------------+------------------------------+
                                |
                                v
@@ -48,7 +48,7 @@ The live app is market-prediction first. `/api/prediction` runs the TypeScript m
 
 Previously, the prediction pipeline (`/api/prediction`) and strategy engine (`/api/strategy`) operated independently. The prediction API produced forecasts, while the strategy API produced procurement plans.
 
-The current runtime improves prediction quality first: live forecasts now invoke the model stack and report honest validation metadata. Strategy still uses the heuristic baseline plus optional HF strategy generation; its unified signal overlay is partial until the model/LLM forecast legs are wired into `/api/strategy`.
+The current runtime improves prediction quality by making the LLM the final analyst rather than a sidecar. It also keeps the candidate model metrics visible so the LLM's judgment does not obscure quantitative evidence.
 
 For the complete rationale behind every data source, feature group, model choice, weight assignment, and the end-to-end tracing from raw data to procurement recommendation, see [Model Decision Flow](Model-Decision-Flow.md).
 
@@ -280,7 +280,7 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
 
 ## 5. V3 Prediction Pipeline
 
-**Live prediction architecture:** The production prediction route runs the 8-model TypeScript stack first. Qwen 2.5 7B runs in parallel as analyst context and becomes the fallback only when the model stack cannot produce a plausible forecast. The deterministic heuristic is the final fallback.
+**Live prediction architecture:** The production prediction route builds evidence first: 8-model TypeScript stack, deterministic heuristic, sentiment/news, cross-market moves, and benchmark state. Qwen 2.5 7B synthesizes those inputs into the final analyst forecast. If HF is unavailable, the route falls back to the model stack, then the deterministic heuristic.
 
 ```
                         DATA SOURCES (21 factor slots)
@@ -365,15 +365,15 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
                               |
                               v
   +----------------------------------------------------------+
-  |              Live Forecast Response                         |
+  |              LLM Analyst Synthesis                          |
   |                                                          |
-  |  Champion model output becomes the primary forecast       |
-  |  when plausible. Qwen and sentiment appear as sidecars.   |
+  |  Candidate forecasts, validation notes, sentiment, news,  |
+  |  and cross-market context feed Qwen's final market view.  |
   |  Fallback paths do not claim train/test metrics.          |
   |                                                          |
-  |  HF models (parallel, non-blocking):                     |
-  |  - DistilRoBERTa (financial sentiment)                   |
-  |  - Qwen 2.5 7B (LLM analyst context / fallback)          |
+  |  HF models:                                              |
+  |  - DistilRoBERTa (financial sentiment evidence)          |
+  |  - Qwen 2.5 7B (final analyst synthesis when enabled)    |
   +----------------------------------------------------------+
 ```
 

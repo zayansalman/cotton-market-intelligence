@@ -72,6 +72,38 @@ const landedCostSchema = z.object({
   }),
 });
 
+const marketForecastSchema = z.object({
+  current_price: z.number().finite(),
+  current_date: z.string().max(20),
+  forecasts: z.array(z.object({
+    horizon: z.string().max(20),
+    predicted_return: z.number().finite(),
+    predicted_price: z.number().finite(),
+    direction: z.enum(["up", "down", "flat"]),
+  }).passthrough()).min(1).max(3),
+  model: z.object({
+    id: z.string().max(100),
+    name: z.string().max(200),
+    kind: z.enum([
+      "llm_synthesis",
+      "model_stack",
+      "llm_fallback",
+      "heuristic_fallback",
+    ]),
+    validation_note: z.string().max(1000).optional(),
+  }).passthrough(),
+  confidence: z.number().finite().optional(),
+  reasoning: z.string().max(5000).optional(),
+  risk: z.string().max(3000).optional(),
+  key_factors: z.array(z.object({
+    factor: z.string().max(200),
+    impact: z.string().max(50),
+    magnitude: z.string().max(50),
+  }).passthrough()).max(20).optional(),
+  forecast_evidence: z.array(z.unknown()).max(20).optional(),
+  evidence_assessment: z.array(z.unknown()).max(20).optional(),
+}).passthrough();
+
 /* ------------------------------------------------------------------ */
 /*  V2 request body schema                                            */
 /* ------------------------------------------------------------------ */
@@ -82,6 +114,7 @@ export const strategyRequestV2Schema = z.object({
   benchmarks: benchmarksSchema,
   headlines: z.array(headlineSchema).max(50),
   landedCost: landedCostSchema.optional(),
+  marketForecast: marketForecastSchema.optional(),
 });
 
 export type StrategyRequestV2 = z.infer<typeof strategyRequestV2Schema>;
@@ -95,6 +128,7 @@ export interface ParsedStrategyRequest {
   benchmarks: Benchmarks;
   headlines: Headline[];
   landedCost: LandedCostResponse | null;
+  marketForecast: z.infer<typeof marketForecastSchema> | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -136,6 +170,7 @@ export function parseStrategyRequest(
         benchmarks: result.data.benchmarks as unknown as Benchmarks,
         headlines: result.data.headlines as unknown as Headline[],
         landedCost: (result.data.landedCost as unknown as LandedCostResponse) ?? null,
+        marketForecast: result.data.marketForecast ?? null,
       },
     };
   }
@@ -178,6 +213,19 @@ export function parseStrategyRequest(
         })),
       };
     }
+    const mfResult = body.marketForecast
+      ? marketForecastSchema.safeParse(body.marketForecast)
+      : { success: true as const, data: undefined };
+    if (!mfResult.success) {
+      return {
+        ok: false,
+        errors: (mfResult as { success: false; error: z.ZodError }).error.issues.map((issue) => ({
+          field: `marketForecast.${issue.path.join(".")}`,
+          reason: issue.message,
+          suggested_fix: suggestedFix(issue),
+        })),
+      };
+    }
 
     const purchaserInput = legacyToPurchaserInput({
       tonnage: body.tonnage as number,
@@ -190,6 +238,7 @@ export function parseStrategyRequest(
         benchmarks: bmResult.data as unknown as Benchmarks,
         headlines: hlResult.data as unknown as Headline[],
         landedCost: (lcResult.data as unknown as LandedCostResponse) ?? null,
+        marketForecast: mfResult.data ?? null,
       },
     };
   }

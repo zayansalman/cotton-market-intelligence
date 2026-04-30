@@ -56,4 +56,38 @@ describe("buildStrategyRequestBody", () => {
     ]);
     expect("landedCost" in result).toBe(false);
   });
+
+  it("includes the analyst market forecast when supplied", () => {
+    const purchaserInput: PurchaserInput = {
+      demand: {
+        required_tonnes: 1200,
+        planning_horizon_months: 3,
+      },
+    };
+    const marketForecast = {
+      current_price: 0.72,
+      current_date: "2026-03-28",
+      forecasts: [{
+        horizon: "21d",
+        predicted_return: 0.012,
+        predicted_price: 0.7286,
+        direction: "up",
+      }],
+      model: {
+        id: "llm_synthesis",
+        name: "LLM analyst synthesis (Qwen 2.5 7B)",
+        kind: "llm_synthesis",
+      },
+    };
+
+    const result = buildStrategyRequestBody({
+      benchmarks: MOCK_BENCHMARKS,
+      headlines: [],
+      landedCost: null,
+      marketForecast,
+      purchaserInput,
+    });
+
+    expect(result.marketForecast).toEqual(marketForecast);
+  });
 });

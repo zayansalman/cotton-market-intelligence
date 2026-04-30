@@ -24,17 +24,20 @@ export interface StrategyRequestBody {
   benchmarks: Benchmarks;
   headlines: Headline[];
   landedCost?: LandedCostResponse;
+  marketForecast?: unknown;
 }
 
 export function buildStrategyRequestBody({
   benchmarks,
   headlines,
   landedCost,
+  marketForecast,
   purchaserInput,
 }: {
   benchmarks: Benchmarks;
   headlines: Headline[];
   landedCost: LandedCostResponse | null;
+  marketForecast?: unknown | null;
   purchaserInput: PurchaserInput;
 }): StrategyRequestBody {
   return {
@@ -43,6 +46,7 @@ export function buildStrategyRequestBody({
     benchmarks,
     headlines,
     ...(landedCost ? { landedCost } : {}),
+    ...(marketForecast ? { marketForecast } : {}),
   };
 }
 
@@ -60,10 +64,14 @@ export function useStrategy({
     if (!priceData) return;
     setGenerating(true);
     try {
+      const marketForecast = await fetch("/api/prediction?horizon=21d")
+        .then((res) => (res.ok ? res.json() : null))
+        .catch(() => null);
       const body = buildStrategyRequestBody({
         benchmarks: priceData.benchmarks,
         headlines,
         landedCost,
+        marketForecast,
         purchaserInput,
       });
       const res = await fetch("/api/strategy", {

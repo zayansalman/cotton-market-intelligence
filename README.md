@@ -172,7 +172,7 @@ CMI separates market prediction from procurement execution, but the strategy rou
                           strategy timing and pacing
 ```
 
-The strategy route computes the constraint-aware heuristic baseline, fetches the analyst market forecast, and gives both to the strategy LLM/heuristic path. Unified decision drivers now include the analyst forecast return when available.
+The client obtains the analyst market forecast from `/api/prediction`, then passes it into `/api/strategy` with the purchaser constraints. This keeps long-running LLM work split across requests instead of nesting a prediction call inside the strategy function. Unified decision drivers include the analyst forecast return when available.
 
 For the complete rationale behind every data source, feature, model, and weight, see [Model Decision Flow](wiki/Model-Decision-Flow.md).
 

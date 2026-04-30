@@ -119,33 +119,6 @@ function confidence01(confidence: number | undefined): number | null {
   return confidence > 1 ? confidence / 100 : confidence;
 }
 
-async function fetchAnalystMarketForecast(
-  req: Request
-): Promise<AnalystMarketForecast | null> {
-  const host = req.headers.get("host") ?? "localhost:3000";
-  const proto = req.headers.get("x-forwarded-proto") ?? "https";
-  const baseUrl = `${proto}://${host}`;
-
-  const res = await fetch(`${baseUrl}/api/prediction?horizon=21d`, {
-    headers: {
-      "User-Agent": "CMI strategy route",
-      Accept: "application/json",
-      "Accept-Language": "en",
-    },
-    cache: "no-store",
-  }).catch(() => null);
-
-  if (!res?.ok) return null;
-  const data = await res.json().catch(() => null);
-  if (
-    data?.forecasts?.[0]?.predicted_return == null ||
-    !data?.model?.kind
-  ) {
-    return null;
-  }
-  return data as AnalystMarketForecast;
-}
-
 function buildUserMessage(
   benchmarks: Benchmarks,
   headlines: Headline[],
@@ -287,13 +260,18 @@ export async function POST(req: Request) {
       );
     }
 
-    const { purchaserInput, benchmarks, headlines, landedCost } = parsed.data;
+    const {
+      purchaserInput,
+      benchmarks,
+      headlines,
+      landedCost,
+      marketForecast,
+    } = parsed.data;
     const heuristicBaseResult = heuristicStrategyV2(
       purchaserInput,
       benchmarks,
       landedCost
     );
-    const marketForecast = await fetchAnalystMarketForecast(req);
 
     const userMsg = buildUserMessage(
       benchmarks,

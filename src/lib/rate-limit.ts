@@ -117,7 +117,12 @@ export function getRateLimitConfig(endpoint: string): RateLimitConfig {
         cooldownMs: 5_000,
       };
 
-  if (endpoint === "strategy") {
+  if (
+    endpoint === "strategy" ||
+    endpoint === "prediction" ||
+    endpoint === "pipeline" ||
+    endpoint === "backtest"
+  ) {
     return buildConfig(endpoint, {
       ...baseline,
       maxRequests: isProd ? 20 : 120,

@@ -13,29 +13,29 @@ const DOCS = [
 Bangladesh spinning mills need to decide WHEN and HOW MUCH cotton to buy. Buy too early at high prices → margin squeeze. Buy too late → stockout. The optimal strategy depends on price levels, momentum, volatility regime, supply/demand fundamentals, and geopolitical context.
 
 ### Our Approach
-CMI combines four intelligence sources into a unified procurement signal:
+CMI starts with a market forecast, then turns that forecast into procurement timing:
 
-**1. Quantitative Model (40% weight)**
-Walk-forward validated prediction model trained on 48 features across 9 groups. Uses gradient boosted stumps for non-linear pattern capture. Evaluated with expanding-window backtesting — no future data leakage.
+**1. Quantitative Model Stack**
+The live forecast route runs an 8-model TypeScript stack over 48 engineered features. The chosen model reports real train/test metrics; if the stack cannot produce a plausible forecast, the app says so instead of inventing accuracy numbers.
 
-**2. Statistical Heuristic (25% weight)**
-Price percentile rank + z-score + volatility regime → signal. Simple, robust, deterministic. Never catastrophically wrong. The honest baseline that any advanced model must beat.
+**2. Statistical Heuristic**
+Price percentile rank + z-score + volatility regime -> signal. Simple, robust, deterministic. The honest baseline that any advanced model must beat.
 
-**3. LLM News Analysis (20% weight)**
-Qwen 2.5 7B Instruct analyzes headlines for forward-looking price implications. Identifies geopolitical events, supply disruptions, demand shifts. Can OVERRIDE statistical signals when news context demands it (e.g., India export ban makes "AVOID at 99th percentile" wrong).
+**3. HF Analyst Context**
+Qwen 2.5 7B Instruct analyzes headlines and cross-market context for forward-looking risks: geopolitics, weather, policy, supply disruptions, and demand shifts. It is sidecar context when the model stack works and a fallback when the stack cannot produce a plausible forecast.
 
-**4. Sentiment Analysis (15% weight)**
-DistilRoBERTa financial sentiment on RSS headlines. Aggregate bullish/bearish/neutral score. Weakest signal but adds information orthogonal to price data.
+**4. Sentiment Analysis**
+DistilRoBERTa financial sentiment on RSS headlines. Aggregate bullish/bearish/neutral score. Useful at the margin, but never presented as validated statistical accuracy.
 
-### The Ensemble
-Weighted combination with confidence from source agreement. When all 4 sources agree → high confidence. When they disagree → lower confidence, wider error bands.`,
+### Fallback Discipline
+Forecasts degrade in order: model stack -> Qwen analyst -> deterministic heuristic. Fallback forecasts keep confidence bands, but validation metrics are shown only when they truly came from the model stack.`,
   },
   {
     id: "data",
     title: "Data Sources",
-    content: `## 21 Data Sources
+    content: `## Forecast Factors + News
 
-### Market Prices (Yahoo Finance — 12 tickers)
+### Market Prices (Yahoo Finance)
 - **Cotton #2 (CT=F)** — Target variable, ICE benchmark
 - **DXY** — USD index, inverse correlation (R ~ -0.3 to -0.6)
 - **WTI Crude Oil (CL=F)** — Polyester substitution chain (oil→naphtha→PX→PTA→PET→polyester)
@@ -60,9 +60,12 @@ Weighted combination with confidence from source agreement. When all 4 sources a
 - **INR/USD** — India (25% of global production AND consumption)
 - **BDT/USD** — Bangladesh (largest raw cotton importer, our primary market)
 
-### Macro (FRED)
+### Macro (FRED, optional)
 - **5Y Breakeven Inflation** — Inflation hedge signal
 - **China Manufacturing PMI** — End-use demand indicator
+
+### Graceful Placeholders
+US cotton export sales and ENSO/weather slots exist in the factor universe, but currently return empty series until reliable free data sources are connected. The pipeline continues when any factor is unavailable.
 
 ### News (7 RSS Feeds)
 CottonGrower, TextileWorld, USDA, World Bank, Reuters Commodities, ICAC, Fibre2Fashion
@@ -98,13 +101,13 @@ Standard TA signals. RSI-14 captures overbought/oversold. MA cross = trend confi
 ### Calendar (5): month, quarter, DOW, harvest flag, planting flag
 Cotton has strong seasonality: US planting Mar-May, harvest Oct-Dec.
 
-### Sentiment (1): aggregate HF sentiment score
-NLP-derived market mood from financial news headlines.`,
+### Sentiment (1): sentiment_score
+Reserved feature column plus live sidecar context from financial news headlines. The app does not claim historical model accuracy from headline sentiment unless that signal is actually present in the validated model path.`,
   },
   {
     id: "models",
     title: "Model Stack",
-    content: `## 8 Models + 3 HF AI Models
+    content: `## 8 Models + HF Analyst Context
 
 ### Baselines (honest null hypothesis)
 - **Naive (Random Walk)**: Predicts zero return. If you can't beat this, your model has no value.
@@ -118,10 +121,9 @@ NLP-derived market mood from financial news headlines.`,
 - **Gradient Boosted Stumps**: 50 rounds of single-split decision trees (lr=0.1). Captures non-linear feature interactions without deep trees. Best bias-variance trade-off at our sample size (~1000 days).
 - **Gradient Boosted Trees (depth 3)**: Deeper trees capture higher-order conditional interactions (e.g., high vol AND low momentum AND harvest season). Complementary signal to stumps.
 
-### HF AI Models
-- **Qwen 2.5 7B Instruct**: LLM analyst for news reasoning and price forecasting
+### HF AI Context
+- **Qwen 2.5 7B Instruct**: LLM analyst for news reasoning and fallback price forecasting
 - **DistilRoBERTa**: Financial sentiment classification on headlines
-- **Chronos T5**: Amazon's time-series foundation model for probabilistic forecasts
 
 ### Champion Selection
 Composite score: -RMSE + 0.5 * direction_accuracy. Must beat naive on at least one metric. Walk-forward validated, not single-split.`,
@@ -147,10 +149,10 @@ Composite score: -RMSE + 0.5 * direction_accuracy. Must beat naive on at least o
 |--------|-----|
 | **Next.js 16** | Server components + API routes in one deploy. No CORS, shared types. |
 | **TypeScript** | Single-language stack including ML models. Deploy simplicity over Python ecosystem. |
-| **No Database** | Stateless. All data from external APIs. localStorage for client state. Zero ops. |
+| **Serverless Core** | Market data is fetched on demand. localStorage handles client scenarios and alerts. Optional Supabase stores forecast history when configured. |
 | **Zod** | Runtime + compile-time safety from one schema definition. |
 | **Recharts** | Declarative React charts. Good enough for area/bar/composed. |
-| **HF Inference** | Open models, no vendor lock-in, $9/mo Pro. Multi-provider failover. |
+| **HF Inference** | Optional open-model analyst context without making the core forecast dependent on a paid AI provider. |
 | **Vitest** | Native ESM, zero config, fast. |
 | **Vercel** | One-click deploy, edge network, serverless functions. |
 

@@ -4,15 +4,17 @@ Cotton Market Intelligence (CMI) is a single-deploy Next.js 16 application that 
 
 ---
 
-## V4: Unified Decision Pipeline
+## Current Decision Pipeline
 
-As of V4, the prediction stack and strategy engine are no longer siloed. They feed into a single unified signal (`computeUnifiedSignal`) that combines four information sources -- quantitative model forecasts, statistical heuristics, LLM analyst reasoning, and news sentiment -- into one weighted ensemble before the strategy engine generates a procurement plan.
+The live app is market-prediction first. `/api/prediction` runs the TypeScript model stack as the primary forecast path, then uses Hugging Face Qwen as analyst context or fallback, then falls back to a deterministic heuristic. `/api/strategy` remains procurement-plan focused: it always computes the constraint-aware heuristic baseline and can call Hugging Face for richer strategy language when configured.
+
+`computeUnifiedSignal` exists as the target four-leg ensemble surface, but the strategy route currently wires heuristic, sentiment, and news-analysis legs only. Model-stack and LLM forecast legs are intentionally documented as not fully wired into strategy yet.
 
 ### End-to-End Flow
 
 ```
   DATA SOURCES (21)
-  Yahoo Finance (12 tickers) + FRED (2 series) + RSS (7 feeds)
+  Yahoo Finance factor feeds + optional FRED + RSS (7 feeds)
         |
         v
   FEATURE ENGINEERING (48 features, 9 groups)
@@ -22,21 +24,18 @@ As of V4, the prediction stack and strategy engine are no longer siloed. They fe
         +---------------------+---------------------+
         |                     |                     |
         v                     v                     v
-  MODEL STACK (8 models)    HF AI MODELS          HEURISTIC
+  MODEL STACK (8 models)    HF AI CONTEXT         HEURISTIC
   naive, mean, MA,          DistilRoBERTa         percentile rank
   seasonal, ridge,          Qwen 2.5 7B          z-score
-  elastic net, boosted      Chronos T5            vol regime
+  elastic net, boosted                            vol regime
   stumps, boosted trees
   walk-forward validated
         |                     |                     |
         v                     v                     v
   +-----------------------------------------------------------+
-  |            computeUnifiedSignal()                          |
-  |                                                            |
-  |  Model: 40%  |  Heuristic: 25%  |  LLM: 20%  | Sent: 15% |
-  |                                                            |
-  |  -> weighted return -> direction -> confidence -> signal   |
-  |  -> decision_drivers[] (full transparency)                 |
+  |             LIVE PREDICTION RESPONSE                        |
+  |  model-stack primary -> Qwen fallback -> heuristic fallback |
+  |  -> forecast, confidence band, validation note, drivers     |
   +----------------------------+------------------------------+
                                |
                                v
@@ -47,9 +46,9 @@ As of V4, the prediction stack and strategy engine are no longer siloed. They fe
 
 ### How It Differs From the Previous Architecture
 
-Previously, the prediction pipeline (`/api/prediction`) and strategy engine (`/api/strategy`) operated independently. The prediction API produced forecasts. The strategy API produced procurement plans. There was no formal mechanism for the strategy engine to incorporate model forecasts, and no weighted ensemble that combined all signals.
+Previously, the prediction pipeline (`/api/prediction`) and strategy engine (`/api/strategy`) operated independently. The prediction API produced forecasts, while the strategy API produced procurement plans.
 
-In V4, the strategy route computes the unified signal inline before generating the procurement plan. The heuristic baseline is always computed. Sentiment analysis runs in parallel on headlines. When the ML model and LLM are available, their outputs feed into the same ensemble. The result is a single coherent signal where every source's contribution is recorded in `decision_drivers` and can be traced back to raw data.
+The current runtime improves prediction quality first: live forecasts now invoke the model stack and report honest validation metadata. Strategy still uses the heuristic baseline plus optional HF strategy generation; its unified signal overlay is partial until the model/LLM forecast legs are wired into `/api/strategy`.
 
 For the complete rationale behind every data source, feature group, model choice, weight assignment, and the end-to-end tracing from raw data to procurement recommendation, see [Model Decision Flow](Model-Decision-Flow.md).
 
@@ -86,13 +85,13 @@ For the complete rationale behind every data source, feature group, model choice
            |                  |                  |
            v                  v                  v
   +----------------+  +---------------+  +----------------+
-  | Strategy       |  | Prediction    |  | Landed Cost    |
+  | Strategy       |  | Prediction    |  | Optional Cost   |
   | Engine         |  | Pipeline      |  | Calculator     |
   |                |  |               |  |                |
-  | Unified signal |  | 21 sources    |  | Futures +      |
-  | (4 sources,    |  | 48 features   |  | basis + freight|
-  |  weighted      |  | 8 models      |  | + FX + duty    |
-  |  ensemble)     |  | + HF AI       |  |                |
+  | constraint-    |  | 21 factor     |  | scenario-only  |
+  | aware baseline |  | slots          |  | futures +      |
+  | + optional HF  |  | 48 features   |  | basis/freight  |
+  | strategy       |  | 8 models      |  | + FX + duty    |
   +----------------+  +---------------+  +----------------+
            |                  |                  |
            v                  v                  v
@@ -103,7 +102,6 @@ For the complete rationale behind every data source, feature group, model choice
   |    useMarketData -> PriceChart, MarketMetrics            |
   |    useStrategy   -> StrategyResults                      |
   |    useForecast   -> ForecastOverlay, PriceChart          |
-  |    useLandedCost -> LandedCostCard                       |
   |    useScenarios  -> ScenarioManager, ScenarioCompare     |
   |                                                          |
   |  State: localStorage (scenarios, alerts, portfolio)      |
@@ -157,7 +155,7 @@ GET /api/headlines
 useMarketData hook -> StrategyResults (context for AI)
 ```
 
-### 2.3 Strategy Generation Flow (V4 Unified)
+### 2.3 Strategy Generation Flow
 
 ```
 User clicks "Generate Strategy"
@@ -167,15 +165,15 @@ POST /api/strategy
   |-- Abuse check -> Rate limit -> Payload guard -> Schema validation
   |-- Compute heuristic baseline (always runs)
   |-- Run sentiment analysis on headlines (parallel, non-blocking)
-  |-- computeUnifiedSignal(model, heuristic, llm, sentiment)
+  |-- Run HF news analysis when available (parallel, non-blocking)
+  |-- computeUnifiedSignal(heuristic, sentiment, news_analysis)
   |-- Resolve AI provider: HF_TOKEN? -> huggingface
-  |                        OPENAI_API_KEY + ALLOW_OPENAI_FALLBACK=1? -> openai
   |                        else -> heuristic with unified signal overlay
   |-- Check AI quota (per-IP daily/monthly, global daily)
   |-- If quota exhausted -> degrade to heuristic with warning
   |-- Try primary provider (30s timeout)
   |-- On failure -> fall through to heuristic
-  |-- Attach decision_drivers[] to response (source transparency)
+  |-- Attach constraint fields and decision_drivers[] when available
   |-- Return Strategy JSON
   v
 useStrategy hook -> StrategyResults (with decision driver breakdown)
@@ -197,7 +195,7 @@ Seven route handlers, all following the same security pipeline.
 | `/api/prediction` | GET | V3 ML forecast (5d/21d/63d) | 20/min, 5 burst/10s | None |
 | `/api/pipeline` | GET | Raw pipeline factors + quality | 20/min, 5 burst/10s | None |
 | `/api/backtest` | GET | Walk-forward backtest results | 20/min, 5 burst/10s | None |
-| `/api/landed-cost` | GET | Bangladesh landed cost calc | 100/min, 20 burst/10s | None |
+| `/api/landed-cost` | GET | Optional Bangladesh landed cost scenario calc | 100/min, 20 burst/10s | None |
 
 ### 3.2 Request/Response Shapes
 
@@ -215,7 +213,7 @@ Headline[]  // { title, summary, link, published }
 ```
 Strategy  // { signal, confidence, executive_summary, market_analysis,
           //   monthly_plan[], risk_factors[], next_actions[], key_levels,
-          //   source: "ai"|"heuristic", provider: "huggingface"|"openai"|"heuristic",
+          //   source: "ai"|"heuristic", provider: "huggingface"|"heuristic",
           //   decision_drivers[], predicted_return }
 ```
 
@@ -240,36 +238,28 @@ Strategy  // { signal, confidence, executive_summary, market_analysis,
 
 ## 4. Strategy Engine
 
-### 4.1 Three-Tier Provider Routing
+### 4.1 Provider Routing
 
 ```
 resolveProvider()
   |
-  |-- Explicit env: STRATEGY_MODEL_PROVIDER = "huggingface" | "openai" | "heuristic"
+  |-- Explicit env: STRATEGY_MODEL_PROVIDER = "huggingface" | "heuristic"
   |
   |-- Auto mode (default):
-  |     1. HF_TOKEN set?                         -> huggingface
-  |     2. OPENAI_API_KEY + ALLOW_OPENAI_FALLBACK=1? -> openai
-  |     3. else                                   -> heuristic
+  |     1. HF_TOKEN set? -> huggingface
+  |     2. else          -> heuristic
   |
   v
 Execute in order, with fallthrough on failure:
 
   [1] Hugging Face Inference API
       Model: Qwen/Qwen2.5-7B-Instruct (configurable via HF_STRATEGY_MODEL)
-      Prompt: system + user message (benchmarks, headlines, tonnage, landed cost)
+      Prompt: system + user message (benchmarks, headlines, purchaser constraints)
       Params: max_new_tokens=900, temperature=0.2, wait_for_model=true
       Timeout: 30s
       Response: JSON parsed from generated_text
 
-  [2] OpenAI Chat Completions
-      Model: gpt-4o-mini (configurable via OPENAI_MODEL)
-      Prompt: system + user messages
-      Params: temperature=0.3, response_format=json_object
-      Timeout: 30s
-      Response: JSON from choices[0].message.content
-
-  [3] Heuristic (always available, zero external dependencies)
+  [2] Heuristic (always available, zero external dependencies)
       Inputs: pct_rank_1y, z_score_1y, vol_30d_ann
       Logic:
         rank < 0.15 AND z < -1  -> STRONG_BUY (conf 80)
@@ -277,9 +267,9 @@ Execute in order, with fallthrough on failure:
         rank > 0.80             -> AVOID (conf 70)
         else                    -> HOLD (conf 50)
       Monthly plan: exponential weighting, flattened if vol > 30%
-      Includes: landed cost context, MA analysis, volatility assessment
+      Includes: MA analysis, volatility assessment, and optional constraint context
 
-All providers: unified signal overlaid on final output with decision_drivers[]
+Heuristic responses include unified-signal overlay fields when available.
 ```
 
 ### 4.2 Quota-Based Degradation
@@ -290,10 +280,10 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
 
 ## 5. V3 Prediction Pipeline
 
-**Live prediction architecture:** The production prediction route uses an LLM-first approach -- Qwen 2.5 7B with full cross-market context generates the live forecast. The 8 statistical models below are retained in the codebase for backtesting, research, and walk-forward validation, but the live `/api/prediction` endpoint delegates to the LLM.
+**Live prediction architecture:** The production prediction route runs the 8-model TypeScript stack first. Qwen 2.5 7B runs in parallel as analyst context and becomes the fallback only when the model stack cannot produce a plausible forecast. The deterministic heuristic is the final fallback.
 
 ```
-                        DATA SOURCES (21 sources)
+                        DATA SOURCES (21 factor slots)
   +----------+  +----------+  +--------+  +--------+  +--------+
   | Cotton   |  | DXY      |  | VIX    |  | Crude  |  | NatGas |
   | CT=F     |  | DX-Y.NYB |  | ^VIX   |  | CL=F   |  | NG=F   |
@@ -375,15 +365,15 @@ Before any AI call, `checkAiQuota()` verifies per-IP daily (default 50), per-IP 
                               |
                               v
   +----------------------------------------------------------+
-  |              Unified Signal Integration                    |
+  |              Live Forecast Response                         |
   |                                                          |
-  |  Champion model output feeds computeUnifiedSignal()      |
-  |  alongside HF AI models and heuristic baseline           |
+  |  Champion model output becomes the primary forecast       |
+  |  when plausible. Qwen and sentiment appear as sidecars.   |
+  |  Fallback paths do not claim train/test metrics.          |
   |                                                          |
   |  HF models (parallel, non-blocking):                     |
   |  - DistilRoBERTa (financial sentiment)                   |
-  |  - Qwen 2.5 7B (LLM quant analyst forecast)             |
-  |  - Chronos T5 (time-series foundation model)             |
+  |  - Qwen 2.5 7B (LLM analyst context / fallback)          |
   +----------------------------------------------------------+
 ```
 
@@ -441,15 +431,16 @@ Every API request passes through six defensive layers before reaching business l
 
 ## 7. State Management
 
-### 7.1 No Database by Design
+### 7.1 Serverless Core + Optional Forecast History
 
-CMI is fully stateless on the server. All persistent state lives client-side.
+CMI's core market and strategy workflow is serverless. Client-facing scenario state lives in localStorage. Supabase is optional and only used for forecast-history tracking when configured.
 
 | State | Storage | Scope | Size |
 |---|---|---|---|
 | Scenarios (saved strategies) | localStorage | Per-browser | ~50 KB typical |
 | Price alerts | localStorage | Per-browser | ~5 KB |
 | Portfolio (multi-mill) | localStorage | Per-browser | ~20 KB |
+| Forecast history (optional) | Supabase | Shared project | Depends on usage |
 | Rate limit buckets | In-memory Map | Per serverless instance | Resets on cold start |
 | Abuse offender scores | In-memory Map | Per serverless instance | Pruned every 30 min |
 | Usage quota counters | In-memory Map | Per serverless instance | Pruned every 10 min |
@@ -467,7 +458,6 @@ page.tsx (client component, root orchestrator)
   |
   |-- Hooks (data fetching + state)
   |   |-- useMarketData()    -> GET /api/prices + /api/headlines on mount
-  |   |-- useLandedCost()    -> GET /api/landed-cost when benchmarks change
   |   |-- usePurchaserInput()-> form state + Zod validation
   |   |-- useStrategy()      -> POST /api/strategy on demand
   |   |-- useForecast()      -> GET /api/prediction on demand
@@ -485,7 +475,6 @@ page.tsx (client component, root orchestrator)
   |   |
   |   |-- <main>             -> content area
   |       |-- MarketMetrics  -> 6 KPI cards (price, rank, vol, MAs)
-  |       |-- LandedCostCard -> Bangladesh cost breakdown + sensitivity
   |       |-- PriceChart     -> Recharts area chart (5Y data, MA overlays, forecast)
   |       |-- ScenarioCompare-> side-by-side diff of two saved scenarios
   |       |-- StrategyResults-> signal badge, executive summary, monthly plan,
@@ -550,4 +539,4 @@ Pre-commit checks: `npm test` (Vitest) and `npm run build` (TypeScript type chec
 
 ### 9.4 Environment Variables
 
-All configuration is via Vercel environment variables, no `.env` files in the repository. Key variables: `HF_TOKEN`, `OPENAI_API_KEY`, `ALLOW_OPENAI_FALLBACK`, `FRED_API_KEY`, `STRATEGY_MODEL_PROVIDER`, and all `RATE_LIMIT_*` / `QUOTA_*` overrides.
+All configuration is via Vercel environment variables, no `.env` files in the repository. Key variables: `HF_TOKEN`, `HF_STRATEGY_MODEL`, `FRED_API_KEY`, `STRATEGY_MODEL_PROVIDER`, optional Supabase forecast-history variables, and all `RATE_LIMIT_*` / `QUOTA_*` overrides.

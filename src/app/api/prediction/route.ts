@@ -1,15 +1,16 @@
 /**
- * /api/prediction — LLM price prediction with full cross-market context.
+ * /api/prediction — model-stack cotton price forecast with analyst sidecar.
  *
- * The LLM sees EVERYTHING a senior commodity analyst would:
+ * The local TypeScript model stack sees the full historical feature matrix:
  * - Cotton price + statistical benchmarks (percentile, z-score, vol, MAs)
  * - Cross-market signals (DXY, oil, soybeans, wheat, corn, VIX, yields, freight)
  * - Input costs (fertilizer, diesel)
  * - FX rates (CNY, INR, BDT)
  * - News headlines with NLP sentiment scores
  *
- * The LLM reasons about causality and predicts a specific price level.
- * Not a toy statistical model — a genuine analytical judgment.
+ * HF Qwen runs in parallel as qualitative analyst context. If the model
+ * stack cannot produce a plausible forecast, the route falls back to the
+ * LLM forecast, then to a deterministic momentum/mean-reversion heuristic.
  *
  * GET ?horizon=21d
  */
@@ -53,6 +54,18 @@ interface PredictionDriver {
   importance: number;
 }
 
+interface PredictionModelMetadata {
+  id: string;
+  name: string;
+  kind: "model_stack" | "llm_fallback" | "heuristic_fallback";
+  train_samples: number | null;
+  test_samples: number | null;
+  test_mae: number | null;
+  test_rmse: number | null;
+  direction_accuracy: number | null;
+  validation_note: string;
+}
+
 interface ModelStackForecast {
   predicted_price: number;
   predicted_return: number;
@@ -62,15 +75,7 @@ interface ModelStackForecast {
   confidence: number;
   reasoning: string;
   risk: string;
-  model: {
-    id: string;
-    name: string;
-    train_samples: number;
-    test_samples: number;
-    test_mae: number;
-    test_rmse: number;
-    direction_accuracy: number;
-  };
+  model: PredictionModelMetadata;
   top_drivers: PredictionDriver[];
 }
 
@@ -242,11 +247,14 @@ async function runModelStackForecast(
     model: {
       id: trainResult.champion.model_id,
       name: trainResult.champion.model_name,
+      kind: "model_stack",
       train_samples: trainResult.champion.n_train,
       test_samples: trainResult.champion.n_test,
       test_mae: trainResult.champion.mae,
       test_rmse: trainResult.champion.rmse,
       direction_accuracy: trainResult.champion.direction_accuracy,
+      validation_note:
+        "Held-out train/test metrics from the local TypeScript model stack.",
     },
     top_drivers: buildModelDrivers(row, trainResult),
   };
@@ -303,7 +311,7 @@ export async function GET(req: Request) {
   const abuse = checkAbuse(req);
   if (abuse.blocked) return abuseBlockedResponse(abuse);
 
-  const rateLimit = evaluateRequestRateLimit(req, "strategy");
+  const rateLimit = evaluateRequestRateLimit(req, "prediction");
   if (!rateLimit.allowed) return rateLimitExceededResponse(rateLimit);
 
   try {
@@ -446,10 +454,10 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
     let confidence: number;
     let reasoning: string;
     let risk: string;
-    let methodology: LlmForecast["methodology"] = llmForecast?.methodology ?? null;
+    const methodology: LlmForecast["methodology"] = llmForecast?.methodology ?? null;
     let keyFactors: LlmForecast["key_factors"] = [];
     let topDrivers: PredictionDriver[] = [];
-    let model = modelStackForecast?.model ?? null;
+    let model: PredictionModelMetadata | null = modelStackForecast?.model ?? null;
     let lowerPrice: number;
     let upperPrice: number;
 
@@ -489,11 +497,14 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
       model = {
         id: "llm_analyst",
         name: source,
-        train_samples: 0,
-        test_samples: 0,
-        test_mae: 0,
-        test_rmse: ciWidth,
-        direction_accuracy: confidence / 100,
+        kind: "llm_fallback",
+        train_samples: null,
+        test_samples: null,
+        test_mae: null,
+        test_rmse: null,
+        direction_accuracy: null,
+        validation_note:
+          "HF LLM fallback; no statistical train/test validation metrics are claimed.",
       };
     } else {
       const momentum = bm.change_30d_pct / 100;
@@ -513,22 +524,28 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
       model = {
         id: "heuristic",
         name: "Heuristic fallback",
-        train_samples: 0,
-        test_samples: 0,
-        test_mae: 0,
-        test_rmse: ciWidth,
-        direction_accuracy: confidence / 100,
+        kind: "heuristic_fallback",
+        train_samples: null,
+        test_samples: null,
+        test_mae: null,
+        test_rmse: null,
+        direction_accuracy: null,
+        validation_note:
+          "Deterministic fallback; confidence is heuristic and not historical model accuracy.",
       };
     }
 
-    const responseModel = model ?? {
+    const responseModel: PredictionModelMetadata = model ?? {
       id: "heuristic",
       name: "Heuristic fallback",
-      train_samples: 0,
-      test_samples: 0,
-      test_mae: 0,
-      test_rmse: 0,
-      direction_accuracy: confidence / 100,
+      kind: "heuristic_fallback",
+      train_samples: null,
+      test_samples: null,
+      test_mae: null,
+      test_rmse: null,
+      direction_accuracy: null,
+      validation_note:
+        "Deterministic fallback; confidence is heuristic and not historical model accuracy.",
     };
 
     if (topDrivers.length === 0) {
@@ -566,6 +583,7 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
       sentiment,
       hf_forecasts: llmForecast ? [{
         provider: "hf_llm",
+        horizon,
         predicted_price: llmForecast.predicted_price,
         predicted_return: llmForecast.predicted_return,
         direction: llmForecast.direction,
@@ -606,7 +624,7 @@ Predict Cotton #2 price in ${horizonLabel}. Consider ALL signals above.`;
     return applyRateLimitHeaders(NextResponse.json(response), rateLimit.headers);
   } catch (e) {
     return applyRateLimitHeaders(
-      safeErrorResponse(e, "strategy"),
+      safeErrorResponse(e, "prediction"),
       rateLimit.headers
     );
   }

@@ -1,13 +1,15 @@
 /**
- * HF-powered price forecasting via two approaches:
+ * Experimental HF-powered price forecasting helpers.
+ *
+ * These helpers are not the live primary `/api/prediction` path. The route
+ * currently runs the local TypeScript model stack first, then uses Qwen as
+ * analyst context/fallback, then deterministic heuristic fallback.
  *
  * 1. LLM Quant Analyst — Structured prompt to Qwen with price data,
  *    features, and sentiment for directional + magnitude forecast
  *
  * 2. Chronos T5 — Amazon's time-series foundation model for
  *    probabilistic point forecasts (when available via Inference API)
- *
- * Falls back to local model stack if HF is unavailable.
  */
 
 import { fetchWithTimeout } from "@/lib/api-security";

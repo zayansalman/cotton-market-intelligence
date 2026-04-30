@@ -110,12 +110,11 @@ GitHub repository secrets:
 If deploy workflows skip with a warning about invalid `VERCEL_TOKEN`, rotate the token in GitHub secrets and re-run the workflow.
 
 Vercel project env vars (set per project/environment):
-- `OPENAI_API_KEY` (optional)
-- `OPENAI_MODEL` (optional, default behavior exists)
 - `HF_TOKEN` (if strategy path depends on Hugging Face)
 - `HF_STRATEGY_MODEL` (optional override)
-- `STRATEGY_MODEL_PROVIDER` (`auto` / `huggingface` / `openai` / `heuristic`)
-- `ALLOW_OPENAI_FALLBACK` (`0` or `1`)
+- `STRATEGY_MODEL_PROVIDER` (`auto` / `huggingface` / `heuristic`)
+- `FRED_API_KEY` (optional macro factor data)
+- `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (optional forecast-history tracking)
 - Rate limiting vars per endpoint (see endpoint keys below):
   - `RATE_LIMIT_<ENDPOINT>_WINDOW_MS`
   - `RATE_LIMIT_<ENDPOINT>_MAX_REQUESTS`
@@ -125,12 +124,18 @@ Vercel project env vars (set per project/environment):
 
 Endpoint keys:
 - `strategy`
+- `prediction`
+- `pipeline`
+- `backtest`
 - `headlines`
 - `prices`
 - `landed_cost`
 
 Recommended production rate limit defaults:
 - `strategy`: 20 req / 60s, burst 5 / 10s, cooldown 60s
+- `prediction`: 20 req / 60s, burst 5 / 10s, cooldown 60s
+- `pipeline`: 20 req / 60s, burst 5 / 10s, cooldown 60s
+- `backtest`: 20 req / 60s, burst 5 / 10s, cooldown 60s
 - `headlines`: 90 req / 60s, burst 20 / 10s, cooldown 20s
 - `prices`: 90 req / 60s, burst 20 / 10s, cooldown 20s
 - `landed_cost`: 90 req / 60s, burst 20 / 10s, cooldown 20s
@@ -148,6 +153,7 @@ Rule: never commit secrets to git.
    - homepage load
    - `/api/prices` returns data
    - `/api/headlines` returns data
+   - `/api/prediction?horizon=21d` returns a forecast with truthful model metadata
    - `/api/strategy` returns valid response
 
 ## 9) Rollback playbook

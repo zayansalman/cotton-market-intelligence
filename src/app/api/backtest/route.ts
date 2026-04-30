@@ -32,7 +32,7 @@ export async function GET(req: Request) {
   const abuse = checkAbuse(req);
   if (abuse.blocked) return abuseBlockedResponse(abuse);
 
-  const rateLimit = evaluateRequestRateLimit(req, "strategy"); // shares strategy limits (expensive)
+  const rateLimit = evaluateRequestRateLimit(req, "backtest");
   if (!rateLimit.allowed) return rateLimitExceededResponse(rateLimit);
 
   try {
@@ -99,7 +99,7 @@ export async function GET(req: Request) {
     );
   } catch (e) {
     return applyRateLimitHeaders(
-      safeErrorResponse(e, "strategy"),
+      safeErrorResponse(e, "backtest"),
       rateLimit.headers
     );
   }

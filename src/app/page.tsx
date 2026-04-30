@@ -84,7 +84,7 @@ export default function Home() {
               Cotton Market Intelligence
             </h1>
             <p className="text-xs text-zinc-500">
-              AI procurement advisor for spinning mills
+              Cotton market forecast and procurement timing
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -346,10 +346,10 @@ export default function Home() {
           {/* Regulatory disclaimers */}
           <div className="border-t border-zinc-800 pt-4 mt-6 space-y-2">
             <p className="text-[10px] text-zinc-600 leading-relaxed">
-              This tool provides AI-generated market analysis and procurement recommendations using Qwen 2.5 7B (via Hugging Face Pro). It is not investment advice. All recommendations should be validated by qualified professionals before execution. Predictions are based on statistical analysis of market data (Yahoo Finance, FRED) and NLP analysis of public news feeds. Models can be wrong — past performance does not guarantee future results. Cotton Market Intelligence provides analytical support for procurement decisions and does not guarantee any specific price outcome.
+              This tool provides model-generated cotton market forecasts and procurement timing support. The primary forecast path uses a local TypeScript model stack when it can produce a plausible validated forecast; Hugging Face Qwen and news sentiment are optional analyst context/fallbacks. It is not investment advice. All recommendations should be validated by qualified professionals before execution. Models can be wrong — past performance does not guarantee future results. Cotton Market Intelligence provides analytical support for procurement decisions and does not guarantee any specific price outcome.
             </p>
             <p className="text-[10px] text-zinc-700">
-              Data: Yahoo Finance (delayed) | News: RSS (CottonGrower, TextileWorld, USDA, Reuters, ICAC, Fibre2Fashion) | Sentiment: HF DistilRoBERTa | Strategy: HF Qwen 2.5 7B | EU AI Act: limited-risk system, transparency obligations met
+              Data: Yahoo Finance (delayed), optional FRED | News: RSS (CottonGrower, TextileWorld, USDA, Reuters, ICAC, Fibre2Fashion) | Sentiment: HF DistilRoBERTa | Optional AI context: HF Qwen 2.5 7B | EU AI Act: limited-risk system, transparency obligations met
             </p>
           </div>
         </main>

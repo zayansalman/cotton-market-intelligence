@@ -2,7 +2,7 @@
 
 ## Factor Registry
 
-48 features engineered from 21 sources.
+48 features engineered from 21 factor slots. Some slots are live Yahoo/FRED feeds; export sales and ENSO/weather are graceful placeholders until reliable free sources are connected.
 
 | ID | Name | Group | Freq | Lag | Unit | Source | Dir | Economic Mechanism |
 |---|---|---|---|---|---|---|---|---|
@@ -25,7 +25,7 @@
 | `corn` | Corn Futures | competing | daily | 0 | $/bu | Yahoo (ZC=F) | -1 | Acreage switching in Delta states. Deepest ag futures market = sector barometer. Corn rally → cotton follows via ag sentiment + shared inputs. |
 | `fertilizer_proxy` | Fertilizer (Mosaic) | supply | daily | 0 | $/share | Yahoo (MOS) | +1 | Input cost proxy. MOS is the largest US fertilizer producer (DAP, potash). Fertilizer up → production cost up → acreage floor rises → cotton price supported. Also signals global ag input inflation, which flows through to all crop production costs within 1-2 seasons. |
 | `diesel` | Heating Oil (Diesel Proxy) | supply | daily | 0 | $/gal | Yahoo (HO=F) | +1 | Farm and logistics cost proxy. Diesel powers tractors, cotton pickers, ginning equipment, and trucking to ports. HO=F is the NYMEX heating oil contract, which tracks ultra-low sulfur diesel closely. Diesel up → production and logistics costs up → cotton price floor rises. |
-| `enso_proxy` | ENSO Index | supply | monthly | 30 | index | NOAA/CPC | +1 | El Nino-Southern Oscillation proxy. La Nina → stronger India monsoon → higher India cotton production (~25% of global supply). El Nino → weaker monsoon → drought risk → lower production → price up. Slow-moving (monthly) but high-impact factor with 6-12 month lead on production outcomes. |
+| `enso_proxy` | ENSO Index | supply | monthly | 30 | index | NOAA/CPC future integration | +1 | El Nino-Southern Oscillation proxy. Currently a placeholder in the live pipeline. La Nina → stronger India monsoon → higher India cotton production (~25% of global supply). El Nino → weaker monsoon → drought risk → lower production → price up. |
 | `us_cotton_exports` | US Export Sales | supply | weekly | 7 | 1000 bales | USDA FAS | +1 | Weekly export pace → real-time demand signal. Not yet available programmatically. |
 
 ## Direction Key
@@ -60,7 +60,7 @@ Every factor is included because it captures a documented economic mechanism:
 
 ## Sentiment Feature
 
-`sentiment_score` is computed by running HF financial sentiment analysis (distilroberta) on RSS headlines. Injected into the last 21 feature rows at prediction time. Adds NLP-derived market mood that is not captured in price data alone.
+`sentiment_score` is reserved in the feature matrix and live sentiment is returned as sidecar context from HF financial sentiment analysis. Do not interpret sentiment as validated model accuracy unless it is actually present in a trained feature path.
 
 ## Release Lag
 

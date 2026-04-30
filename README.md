@@ -1,6 +1,6 @@
 # Cotton Market Intelligence (CMI)
 
-A production cotton procurement intelligence platform that helps Bangladesh spinning mills decide **when** and **how much** cotton to buy. The system pulls Cotton #2 futures data from 21 sources, computes statistical benchmarks, runs LLM-first price prediction (Qwen 2.5 7B with full cross-market context), maintains an 8-model statistical stack for backtesting/research, combines all signals into a unified weighted ensemble, and generates AI-powered procurement strategies with full decision transparency -- all deployed as a stateless Next.js application on Vercel.
+A production cotton market intelligence platform that helps Bangladesh spinning mills decide **where the cotton market is likely heading** before turning that view into a practical procurement plan. The live app pulls Cotton #2 futures and cross-market factor data, computes statistical benchmarks, runs a TypeScript-native 8-model forecast stack for 5d/21d/63d horizons, uses Hugging Face AI as optional analyst context, and degrades to transparent heuristics when external AI or factor feeds are unavailable.
 
 **Live:** [cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app) | **Dev:** [cmi-notebooks-dev.vercel.app](https://cmi-notebooks-dev.vercel.app)
 
@@ -11,7 +11,7 @@ A production cotton procurement intelligence platform that helps Bangladesh spin
 1. [What It Does](#what-it-does)
 2. [Architecture](#architecture)
 3. [Quantitative Design Decisions](#quantitative-design-decisions)
-4. [Unified Decision Pipeline](#unified-decision-pipeline)
+4. [Decision Pipeline](#decision-pipeline)
 5. [V3 Price Prediction Pipeline](#v3-price-prediction-pipeline)
 6. [Security Model](#security-model)
 7. [Bangladesh-Specific Logic](#bangladesh-specific-logic)
@@ -31,18 +31,18 @@ CMI answers three questions for a cotton procurement desk:
 
 1. **Is cotton cheap or expensive?** -- Percentile rank and z-score vs. 1Y/5Y history, volatility regime, moving average positioning.
 2. **Should we buy now, phase, or wait?** -- Signal generation (STRONG_BUY / BUY / HOLD / AVOID) with confidence score, executive summary, risk assessment, and key levels.
-3. **What is the month-by-month buy plan?** -- Tonnage allocation across the procurement horizon with exponential weighting, pacing recommendations, and landed cost in BDT/kg.
+3. **What is the month-by-month buy plan?** -- Tonnage allocation across the procurement horizon with exponential weighting, pacing recommendations, and constraint-aware execution notes.
 
 ### Core Capabilities
 
 | Capability | Description |
 |---|---|
 | **Price Intelligence** | Cotton #2 futures from Yahoo Finance. 1Y/5Y percentile rank, z-score, 30d/90d annualized volatility, 50d/200d MA, momentum. |
-| **Unified Decision Pipeline** | Four-source weighted ensemble (model 40%, heuristic 25%, LLM 20%, sentiment 15%) with full decision driver transparency. Every recommendation traces back to raw data. |
-| **Strategy Engine** | AI-generated procurement strategy via Hugging Face (Qwen 2.5 7B) with deterministic heuristic baseline. Always produces a result. |
-| **Landed Cost Calculator** | Futures price to BDT/kg with basis, freight, insurance, duty, FX conversion, and wastage adjustment. Origin-specific presets. |
-| **Price Prediction (V3)** | 21-source data pipeline, 48-feature engineering library, 8-model stack, walk-forward backtesting, accuracy scorecard, 5d/21d/63d forecasts with 95% CI. Live prediction uses LLM-first approach (Qwen 2.5 7B with full cross-market context); statistical models retained for backtesting/research. |
-| **HF AI Integration** | Financial sentiment analysis (DistilRoBERTa), LLM quant analyst forecast (Qwen 2.5 7B), Chronos T5 time-series forecasting. |
+| **Market Prediction (V3)** | 21-factor data pipeline, 48-feature engineering library, 8-model TypeScript stack, train/test validation, 5d/21d/63d forecasts, and 95% confidence bands. The live `/api/prediction` route uses the model stack first. |
+| **HF AI Context** | Optional DistilRoBERTa headline sentiment and Qwen 2.5 7B analyst reasoning. These enrich interpretation but do not replace validated model metadata. |
+| **Strategy Engine** | Constraint-aware procurement strategy via deterministic heuristic baseline plus optional Hugging Face strategy generation. Always produces a result. |
+| **Decision Transparency** | Forecast responses show primary source, validation note, top drivers, confidence band, sidecar AI forecasts, and sentiment context when available. |
+| **Optional Landed Cost Utility** | A separate `/api/landed-cost` calculator exists for scenario work, but the main app is intentionally focused on market direction because landed cost assumptions vary by buyer and trade lane. |
 | **Multi-Mill Portfolio** | Multiple mill configurations with aggregate portfolio views. |
 | **Alert System** | Signal change, volatility breach, key level break, price threshold alerts via webhook/email. |
 | **Scenario Management** | Save, load, compare, and replay procurement scenarios via localStorage. |
@@ -52,10 +52,10 @@ CMI answers three questions for a cotton procurement desk:
 ## Architecture
 
 ```
-                       DATA SOURCES (21)
+                  FORECASTING FACTORS + NEWS CONTEXT
   +------------------+  +----------------+  +------------------+
   | Yahoo Finance    |  | FRED           |  | RSS Feeds (7)    |
-  | 12 tickers       |  | T5YIE          |  | cottongrower     |
+  | live factor data |  | optional macro |  | cottongrower     |
   | CT=F, DXY, VIX,  |  | MPMICNMA669S   |  | textileworld     |
   | CL=F, NG=F, ^TNX |  |                |  | usda, worldbank  |
   | CNY=X, ^BDI,     |  |                |  | reuters, icac    |
@@ -71,18 +71,18 @@ CMI answers three questions for a cotton procurement desk:
            +------------------+------------------+
            |                  |                  |
            v                  v                  v
-  MODEL STACK (8)        HF AI MODELS        HEURISTIC
+  MODEL STACK (8)        HF AI CONTEXT       HEURISTIC
   naive, mean, MA,       DistilRoBERTa       pct_rank, z_score
   seasonal, ridge,       Qwen 2.5 7B         vol regime
-  elastic net,           Chronos T5
+  elastic net,
   boosted stumps,
   boosted trees
            |                  |                  |
            v                  v                  v
   +----------------------------------------------------------+
-  |         computeUnifiedSignal() -- weighted ensemble       |
-  |   Model: 40% | Heuristic: 25% | LLM: 20% | Sent: 15%   |
-  |   -> signal, confidence, decision_drivers[]               |
+  |              PREDICTION RESPONSE                          |
+  |  primary forecast -> CI band -> top drivers -> sidecars    |
+  |  model-stack first; LLM then heuristic fallback            |
   +---------------------------+------------------------------+
                               |
                               v
@@ -101,7 +101,7 @@ CMI answers three questions for a cotton procurement desk:
 
 **Stack:** Next.js 16 (App Router), React 19, TypeScript 5, Tailwind CSS 4, Recharts, Zod 4, Vitest
 
-**Key constraint:** Fully stateless. No database. All market data fetched on demand from external APIs. Client-side persistence via localStorage only. This keeps infrastructure cost at zero and deployment trivial.
+**Key constraint:** The core market/strategy workflow is serverless and fetches market data on demand. Client scenario state lives in localStorage. Supabase is optional and used only for forecast-history tracking when configured.
 
 ### API Surface
 
@@ -109,10 +109,10 @@ CMI answers three questions for a cotton procurement desk:
 |---|---|---|
 | `/api/prices` | Market data + statistical benchmarks | 90 req/60s |
 | `/api/headlines` | RSS news ingestion (7 feeds) | 90 req/60s |
-| `/api/strategy` | Unified signal + AI/heuristic procurement strategy | 20 req/60s |
-| `/api/landed-cost` | Bangladesh landed cost calculation | 90 req/60s |
-| `/api/backtest` | Walk-forward backtesting results | 90 req/60s |
-| `/api/pipeline` | Data pipeline status + factor availability | 90 req/60s |
+| `/api/strategy` | AI/heuristic procurement strategy | 20 req/60s |
+| `/api/landed-cost` | Optional Bangladesh landed cost scenario calculation | 90 req/60s |
+| `/api/backtest` | Walk-forward backtesting results | 20 req/60s |
+| `/api/pipeline` | Data pipeline status + factor availability | 20 req/60s |
 | `/api/prediction` | Point forecasts + confidence intervals | 20 req/60s |
 
 ---
@@ -130,9 +130,11 @@ Every statistical choice has a reason. This section explains the "why" behind ea
 | **Annualized volatility (sqrt(252))** | Industry standard for daily data. 252 trading days per year. Allows direct comparison with options-implied vol and cross-asset vol benchmarks. |
 | **Exponential allocation weighting** | Front-loads tonnage on BUY signals, back-loads on AVOID. Reflects time value of procurement: locking in a good price today is worth more than the option to buy later at the same price, because you eliminate execution risk. |
 
-### Ensemble Weighting
+### Target Signal Weighting
 
-| Source | Weight | Rationale |
+`computeUnifiedSignal` supports the target four-leg ensemble below. The live prediction endpoint currently prioritizes the validated model-stack forecast and reports AI/sentiment as sidecar context; the strategy endpoint uses heuristic, sentiment, and news-analysis legs today.
+
+| Source | Target Weight | Rationale |
 |---|---|---|
 | **Model forecast** | 40% | Walk-forward validated against real out-of-sample data. Processes 48 features. Earns the highest weight through demonstrated performance. |
 | **Heuristic** | 25% | Simple, robust, never catastrophically wrong. Acts as a sanity check on complex models. |
@@ -153,21 +155,22 @@ Every statistical choice has a reason. This section explains the "why" behind ea
 
 ---
 
-## Unified Decision Pipeline
+## Decision Pipeline
 
-The prediction stack and strategy engine feed into a single weighted ensemble (`computeUnifiedSignal`) that produces one coherent signal with full transparency into what each source contributed.
+CMI separates market prediction from procurement execution. The live prediction route first tries to run the local model stack against the latest factor matrix. Qwen and sentiment run as optional sidecars for qualitative context. If the validated model path cannot produce a plausible forecast, the endpoint falls back to Qwen, then to a deterministic momentum/mean-reversion heuristic. Fallback responses deliberately do **not** claim train/test model metrics.
 
 ```
-  Model forecast -------- 40% ---+
-  Heuristic ------------- 25% ---+--> weighted return --> direction
-  LLM analyst ----------- 20% ---+   --> confidence (source agreement)
-  Sentiment ------------- 15% ---+   --> signal (STRONG_BUY/BUY/HOLD/AVOID)
-                                      --> decision_drivers[]
+  Model stack forecast -- primary when plausible
+  Qwen analyst --------- sidecar, or fallback if model stack unavailable
+  Sentiment ------------ sidecar context
+  Heuristic ------------ final deterministic fallback
+                                      |
+                                      v
+                          forecast, confidence band,
+                          validation note, top drivers
 ```
 
-Confidence is computed from source agreement: when all four sources agree on direction, confidence is 0.95. When sources are split, confidence drops proportionally. This makes confidence a measure of consensus, not a single model's self-assessment.
-
-Every strategy response includes `decision_drivers[]` -- the full decomposition showing each source's weight, direction, magnitude, and reasoning. A user can trace any BUY/AVOID recommendation back through the ensemble to the raw data that produced it.
+The strategy route still computes a transparent heuristic baseline and can call Hugging Face for richer strategy language when `HF_TOKEN` is configured. Its `computeUnifiedSignal` integration currently uses heuristic, sentiment, and news-analysis legs; wiring the live model-stack return into strategy is tracked separately so docs do not overstate runtime behavior.
 
 For the complete rationale behind every data source, feature, model, and weight, see [Model Decision Flow](wiki/Model-Decision-Flow.md).
 
@@ -178,7 +181,8 @@ For the complete rationale behind every data source, feature, model, and weight,
 The prediction system follows an 8-stage pipeline from raw data to chart overlay.
 
 ```
-  [1] Data Sources        21 sources: Yahoo Finance + FRED + RSS + HF AI
+  [1] Data Sources        21 factor slots: live Yahoo data, optional FRED,
+                          graceful placeholders, plus RSS context
           |
   [2] Release-Lag         Forward-fill with configurable publication offset
       Alignment
@@ -197,8 +201,8 @@ The prediction system follows an 8-stage pipeline from raw data to chart overlay
   [6] Accuracy            Traffic-light rating (green/amber/red),
       Scorecard           go/no-go production criteria
           |
-  [7] Unified Signal      Champion model feeds into 4-source ensemble
-                          alongside heuristic, LLM, and sentiment
+  [7] Live Forecast       Champion model produces primary forecast when
+                          plausible; Qwen/heuristic are fallbacks
           |
   [8] Chart Overlay       Forecast line + confidence band on price chart
 ```
@@ -216,7 +220,7 @@ The prediction system follows an 8-stage pipeline from raw data to chart overlay
 | Gradient boosted stumps | Non-linear ensemble capturing feature interactions (depth 1) | O(n*p*T) |
 | Gradient boosted trees | Higher-order interactions via depth-3 trees | O(n*p*T) |
 
-Models are evaluated on expanding-window out-of-sample RMSE and directional accuracy. The accuracy scorecard applies traffic-light ratings and enforces go/no-go criteria before any forecast reaches the UI or the unified ensemble.
+Models are evaluated with held-out train/test metrics and walk-forward tooling. The live route reports the validation metrics only when the primary forecast came from the model stack; Qwen and heuristic fallback paths return explicit validation notes instead of placeholder statistics.
 
 ---
 
@@ -240,7 +244,9 @@ Seven layers, applied in order on every request. Defense-in-depth: each layer as
 
 CMI is not a generic commodity tool. It encodes domain knowledge specific to Bangladesh's cotton import market.
 
-**Landed cost calculation:** Converts Cotton #2 futures (USc/lb) through a full cost chain to BDT/kg -- the unit a Bangladesh spinning mill actually budgets in. The chain: futures price, basis adjustment (origin-dependent), ocean freight, insurance, import duty, letter of credit charges, FX conversion (USD/BDT), and wastage factor.
+**Market-first design:** The primary product surface predicts Cotton #2 market direction and translates that into timing/pacing guidance. Landed cost is intentionally kept out of the main flow because basis, freight, LC terms, FX execution, quality specs, and origin spreads vary materially by buyer and shipment.
+
+**Optional landed cost calculation:** `/api/landed-cost` can still convert Cotton #2 futures (USc/lb) through a scenario cost chain to BDT/kg for what-if work. It should be treated as a buyer-specific calculator, not as part of the live market forecast.
 
 **Origin presets:** India (fast lane, 2-3 week lead time, lower freight, smaller basis) vs. long-haul origins (US, Brazil, West Africa -- 6-8 week lead time, higher freight). Lead time directly affects how far forward the procurement plan must look.
 
@@ -261,16 +267,16 @@ CMI is not a generic commodity tool. It encodes domain knowledge specific to Ban
 | Metric | Value |
 |---|---|
 | Total lines of TypeScript | 14,000+ |
-| Test count | 180 |
-| Test files | 18 |
-| Source files | 97 |
-| React components | 20 |
-| Custom hooks | 6 |
-| API routes | 7 |
+| Test count | 183 |
+| Test files | 19 |
+| Source files | 103 |
+| React components | 22 |
+| Custom hooks | 7 |
+| API routes | 8 |
 | Prediction features | 48 (across 9 groups) |
 | Prediction models | 8 |
-| Data sources | 21 |
-| Ensemble sources | 4 (model, heuristic, LLM, sentiment) |
+| Forecast factor slots | 21 |
+| Target ensemble sources | 4 (model, heuristic, LLM, sentiment) |
 | RSS feeds | 7 |
 | Security layers | 7 |
 
@@ -293,27 +299,28 @@ Open [http://localhost:3000](http://localhost:3000). The app works immediately w
 
 ### Environment Variables
 
-Create `.env.local` for optional AI features:
+Create `.env.local` for optional AI and forecast-history features:
 
 ```bash
-# AI strategy generation (optional -- heuristic works without these)
+# AI strategy generation and analyst context (optional)
 HF_TOKEN=your_huggingface_token
 HF_STRATEGY_MODEL=Qwen/Qwen2.5-7B-Instruct
-OPENAI_API_KEY=your_openai_key
-OPENAI_MODEL=gpt-4o-mini
 
 # Provider routing
-STRATEGY_MODEL_PROVIDER=auto    # auto | huggingface | openai | heuristic
-ALLOW_OPENAI_FALLBACK=0         # 1 to enable OpenAI as second fallback
+STRATEGY_MODEL_PROVIDER=auto    # auto | huggingface | heuristic
+
+# Optional macro data and forecast-history tracking
+FRED_API_KEY=your_fred_key
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
 ### Provider Routing
 
 | Setting | Behavior |
 |---|---|
-| `auto` (default) | HF first, then heuristic. OpenAI only if `ALLOW_OPENAI_FALLBACK=1`. |
+| `auto` (default) | HF first when `HF_TOKEN` is set, then heuristic. |
 | `huggingface` | Force HF. Falls back to heuristic if unavailable. |
-| `openai` | Force OpenAI. Falls back to heuristic if unavailable. |
 | `heuristic` | Deterministic only. No external AI calls. |
 
 ### Rate Limiting
@@ -384,7 +391,7 @@ Production deployments should use GitHub Environment protection rules with requi
 | [Bangladesh Market](wiki/Bangladesh-Market.md) | Bangladesh cotton import context |
 | [Business Case](wiki/Business-Case.md) | Commercial rationale and ROI |
 | [Business Model](wiki/Business-Model.md) | Monetization and go-to-market |
-| [V3 Data Dictionary](wiki/V3-Data-Dictionary.md) | All 21 sources, 48 features, definitions |
+| [V3 Data Dictionary](wiki/V3-Data-Dictionary.md) | All 21 factor slots, 48 features, definitions |
 | [V3 Predictor Universe](wiki/V3-Predictor-Universe.md) | Factor selection rationale |
 | [Price Prediction Roadmap](wiki/Price-Prediction-Roadmap.md) | V3 issue tracker and delivery sequence |
 | [V2 Worked Scenarios](wiki/V2-Worked-Scenarios.md) | End-to-end procurement examples |
@@ -399,4 +406,4 @@ Production deployments should use GitHub Environment protection rules with requi
 
 **Zayan Khan** -- CS (Brunel University London, First-Class Honours), ex-Berenberg Bank quantitative research, Growth Manager at iFarmer (Bangladesh's largest agri-tech startup).
 
-This project reflects the intersection of quantitative finance, agricultural domain expertise, and production engineering. The statistical methods come from institutional commodity trading. The domain logic comes from working directly with Bangladesh spinning mills. The engineering decisions prioritize reliability (triple-fallback strategy engine), correctness (walk-forward validation, release-lag alignment), and zero-infrastructure cost (stateless, no database).
+This project reflects the intersection of quantitative finance, agricultural domain expertise, and production engineering. The statistical methods come from institutional commodity trading. The domain logic comes from working directly with Bangladesh spinning mills. The engineering decisions prioritize reliability (model-stack -> AI sidecar/fallback -> heuristic fallback), correctness (train/test validation, walk-forward tooling, release-lag alignment), and low operational overhead (serverless core with optional Supabase forecast history).

@@ -16,15 +16,15 @@ Every significant engineering trade-off in Cotton Market Intelligence, with rati
 
 ---
 
-## 2. No Database (Stateless Server)
+## 2. Serverless Core + Optional Forecast History
 
-**Decision**: Zero server-side persistence. All market data comes from external APIs at request time. User state lives in localStorage.
+**Decision**: Keep the core market and strategy workflow serverless. Market data comes from external APIs at request time. User state lives in localStorage. Supabase is optional and used only for forecast-history tracking when configured.
 
-**Why**: Cotton prices, macro indicators, and news headlines are inherently real-time data. There is nothing to cache in a database that would not be stale within hours. Vercel's hobby tier has no persistent storage, and adding a database (Supabase, PlanetScale, Neon) introduces migration risk, connection pooling concerns, and operational overhead for a tool that does not need it.
+**Why**: Cotton prices, macro indicators, and news headlines are inherently real-time data. The core app does not need a database to render live market intelligence. Forecast-history persistence is valuable for accountability, but it is optional and non-blocking so prediction requests still succeed if Supabase is unavailable.
 
 **Alternatives considered**: PostgreSQL for historical price caching (rejected: Yahoo Finance serves 5 years of history in <1s), Redis for session state (rejected: no user accounts to track), SQLite via Turso (rejected: adds a dependency for marginal benefit).
 
-**Trade-offs**: No user accounts, no server-side session persistence, no audit trail. Rate limiting resets on cold start because counters are in-memory. Every prediction request re-fetches market data from Yahoo Finance. These are acceptable: the target user base is small (iFarmer procurement team), data freshness is a feature not a bug, and approximate rate limiting is sufficient.
+**Trade-offs**: No user accounts or server-side session persistence. Rate limiting resets on cold start because counters are in-memory. Every prediction request re-fetches market data from Yahoo Finance. These are acceptable: the target user base is small (iFarmer procurement team), data freshness is a feature not a bug, and approximate rate limiting is sufficient.
 
 ---
 
@@ -64,15 +64,15 @@ Every significant engineering trade-off in Cotton Market Intelligence, with rati
 
 ---
 
-## 6. HF-First AI Routing
+## 6. HF Optional AI Routing
 
-**Decision**: Hugging Face Inference API is the primary AI provider. OpenAI is an explicit opt-in fallback. Heuristic is always available.
+**Decision**: Hugging Face Inference API is the optional AI provider. Heuristic is always available. OpenAI is documented as not currently wired into the runtime.
 
-**Why**: Hugging Face offers free inference for open models. Qwen 2.5 7B Instruct is competitive with GPT-4o-mini for structured JSON output tasks like strategy generation. Using open models avoids vendor lock-in and keeps costs at zero for the default configuration. OpenAI requires `ALLOW_OPENAI_FALLBACK=1` as an explicit environment variable -- it is never called unless the operator deliberately enables it.
+**Why**: Qwen 2.5 7B Instruct is strong enough for structured JSON strategy generation and qualitative market commentary. Keeping AI optional prevents provider outages or quota limits from blocking the procurement workflow. The validated local model stack remains the primary live prediction path.
 
-**Alternatives considered**: OpenAI-first (rejected: cost scales with usage, vendor lock-in), Anthropic Claude (rejected: higher cost per token for structured output), local model inference via llama.cpp (rejected: Vercel serverless has no GPU, cold start would be seconds).
+**Alternatives considered**: OpenAI-first (rejected for now: cost scales with usage, vendor lock-in, and no execution path exists in the current strategy route), Anthropic Claude (rejected: higher cost per token for structured output), local model inference via llama.cpp (rejected: Vercel serverless has no GPU, cold start would be seconds).
 
-**Trade-offs**: Hugging Face Inference API has variable latency (cold model loading can take 20-30 seconds on first call). The 30-second timeout handles this. Model quality depends on what is available on the free tier. If HF is down, the system falls through to OpenAI (if configured) or heuristic. The heuristic is always available and provides a statistically sound baseline.
+**Trade-offs**: Hugging Face Inference API has variable latency (cold model loading can take 20-30 seconds on first call). The 30-second timeout handles this. Model quality depends on what is available on the hosted tier. If HF is down, the system falls through to the heuristic. The heuristic is always available and provides a transparent baseline.
 
 ---
 
@@ -80,7 +80,7 @@ Every significant engineering trade-off in Cotton Market Intelligence, with rati
 
 **Decision**: Every external dependency can fail, and the application continues to function.
 
-**Why**: A cotton spinning mill running procurement during a buying window cannot afford "Service Unavailable." The system is designed so that at every level, failure of an upstream component degrades quality but never blocks the user. If Yahoo Finance is down, the API returns a 502 but the UI still renders. If HF and OpenAI both fail, the heuristic strategy works with local statistical analysis. If FRED is unreachable, the prediction pipeline runs with fewer factors. If all RSS feeds timeout, the strategy generates without news context.
+**Why**: A cotton spinning mill running procurement during a buying window cannot afford "Service Unavailable." The system is designed so that at every level, failure of an upstream component degrades quality but never blocks the user. If Yahoo Finance is down, the API returns a 502 but the UI still renders. If HF fails, the heuristic strategy works with local statistical analysis. If FRED is unreachable, the prediction pipeline runs with fewer factors. If all RSS feeds timeout, the strategy generates without news context.
 
 **Alternatives considered**: Fail-fast with clear error messages (rejected: unhelpful when the user needs to make a procurement decision now), retry with exponential backoff (rejected: adds latency, serverless functions have execution time limits).
 

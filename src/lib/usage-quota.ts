@@ -145,7 +145,7 @@ function extractIp(req: Request): string {
 
 /**
  * Check whether this request is allowed to use AI inference.
- * Call BEFORE making HF/OpenAI calls.
+ * Call BEFORE making hosted AI calls.
  *
  * If not allowed, returns `degraded_to_heuristic: true` — the caller
  * should skip AI and fall back to heuristic directly.

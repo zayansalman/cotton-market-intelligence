@@ -219,7 +219,7 @@ For the target (cotton price), add:
 
 ### Feature Count Guidance
 
-Aim for **48 features** from **21 sources**. Here is why:
+Aim for **48 features** from roughly **21 factor slots**. Here is why:
 
 - With ~1000 trading days of daily data (4 years), you have roughly 1000 samples
 - The rule of thumb is 10-20 samples per feature for linear models
@@ -377,17 +377,17 @@ This is the "wisdom of crowds" signal. If 80% of headlines are bearish, that is 
 - Input: recent headlines + current price context + model forecast
 - Output: structured analysis of forward-looking price implications
 - Identifies: geopolitical events, supply disruptions, policy changes, weather events
-- Can OVERRIDE statistical signals when news context demands it
+- Can flag when news context should challenge statistical signals
 
-The override capability is the key innovation. Example: your heuristic model says AVOID because cotton is at the 99th percentile of its historical range. But the LLM reads that India just banned cotton exports (25% of global supply removed). The correct call is BUY -- supply squeeze incoming. This is the gap between a quant model and a human analyst, and the LLM bridges it.
+The challenge capability is the key innovation. Example: your heuristic model says AVOID because cotton is at the 99th percentile of its historical range. But the LLM reads that India just banned cotton exports (25% of global supply removed). The correct workflow is to surface that contradiction clearly so a procurement manager can decide whether the news shock justifies buying despite stretched price levels.
 
 ### Fallback Chain
 
 LLM APIs are unreliable. Build a fallback chain:
 
 ```
-HF Inference API (primary)
-  --> OpenAI API (fallback)
+Local model stack (primary forecast)
+  --> HF analyst forecast (fallback/context)
     --> Heuristic-only (emergency fallback)
 ```
 
@@ -478,7 +478,7 @@ The UI has one job: help a procurement manager make a better decision in under 6
 ### Rate Limiting
 
 - Per-IP rate limits on all API endpoints
-- Per-user rate limits on AI inference (HF/OpenAI calls are expensive)
+- Per-user rate limits on hosted AI inference
 - Payload size validation (reject oversized requests)
 - Input sanitization (commodity names, date ranges, numerical inputs)
 
@@ -539,7 +539,7 @@ The framework is commodity-agnostic. The domain knowledge is in the factor selec
 
 2. **Simpler models win more often than you expect.** Ridge regression beat boosted stumps on 21-day cotton forecasts in our walk-forward tests. Do not skip baselines.
 
-3. **The LLM override is the feature users value most.** Statistical signals are table stakes. The ability to say "model says X but news says Y, here is why" is what makes procurement managers trust the system.
+3. **The LLM challenge is the feature users value most.** Statistical signals are table stakes. The ability to say "model says X but news says Y, here is why" is what makes procurement managers trust the system.
 
 4. **Freight matters more than you think.** Container rates added 3-5 cents/lb to CIF cotton cost during the 2021-22 shipping crisis. Ignoring logistics is ignoring 5-10% of the landed cost.
 

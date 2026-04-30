@@ -10,7 +10,7 @@ The live app combines:
 1. **Price regime signals** (percentile, z-score, momentum)
 2. **Volatility-aware pacing**
 3. **Current headline context**
-4. **AI reasoning (HF-first, OpenAI fallback) with deterministic fallback**
+4. **Optional HF reasoning with deterministic fallback**
 5. **Purchaser constraints** (V2: quality, timeline, commercial, finance, logistics)
 
 ## Input modes
@@ -18,7 +18,7 @@ The live app combines:
 ### Basic mode (V1 compatible)
 - `tonnage` (tonnes needed)
 - `months` (planning horizon)
-- Real-time price benchmarks + RSS headlines + landed cost context
+- Real-time price benchmarks + RSS headlines
 
 ### Advanced mode (V2)
 Full `PurchaserInput` schema with 6 field groups:
@@ -72,10 +72,12 @@ See [Purchaser-Inputs-Bangladesh](Purchaser-Inputs-Bangladesh.md) for full field
 
 ### AI enhancement
 
-When HF token (primary) or OpenAI key (fallback) is configured:
+When an HF token is configured:
 - Model receives structured market + headline + constraint context
 - Returns structured JSON strategy
 - If AI fails, system reverts to deterministic path
+
+OpenAI is not currently wired into the strategy route. Keep docs and environment configuration aligned with the live `huggingface | heuristic` provider set until an OpenAI execution path is implemented.
 
 ## Scenario management (V2)
 

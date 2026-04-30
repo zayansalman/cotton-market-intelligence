@@ -263,7 +263,7 @@ If a machine learning model cannot beat "predict zero return" on out-of-sample d
 
 Three reasons, in order of importance:
 
-1. **Runtime environment.** The system is a stateless Next.js API running on Vercel. There is no Python runtime, no GPU, and no persistent model state. Neural network inference requires either a hosted model API (latency, cost, dependency) or WebAssembly/ONNX inference (complex, still slow for LSTMs). Ridge regression and boosted stumps fit and predict in <100ms in pure TypeScript.
+1. **Runtime environment.** The system is a serverless Next.js API running on Vercel. There is no Python runtime, no GPU, and no persistent model state in the core prediction path. Neural network inference requires either a hosted model API (latency, cost, dependency) or WebAssembly/ONNX inference (complex, still slow for LSTMs). Ridge regression and boosted stumps fit and predict in <100ms in pure TypeScript.
 
 2. **Sample size.** With ~1000-1250 daily observations and 48 features, we are firmly in the "small data" regime where deep learning has no advantage over properly regularized linear models and shallow ensembles. The universal approximation theorem is irrelevant when you do not have enough data to estimate the parameters.
 
@@ -379,9 +379,9 @@ The model was fine-tuned on Financial PhraseBank, which consists of English-lang
 
 ## 11. Bangladesh-Specific Rationale
 
-### Landed Cost Chain
+### Optional Landed Cost Chain
 
-The landed cost calculator transforms a Cotton #2 futures price (USD/lb) into the effective cost in BDT/kg at a Bangladeshi mill gate. The chain is:
+The landed cost calculator is a scenario utility, not the live market prediction path. It transforms a Cotton #2 futures price (USD/lb) into an effective cost in BDT/kg at a Bangladeshi mill gate when a buyer wants to test specific basis, freight, duty, FX, and wastage assumptions. The chain is:
 
 ```
 Futures (USD/lb)

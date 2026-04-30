@@ -42,9 +42,11 @@ interface PredictionResponse {
   model: {
     id: string;
     name: string;
-    train_samples: number;
-    test_rmse: number;
-    direction_accuracy: number;
+    kind: "model_stack" | "llm_fallback" | "heuristic_fallback";
+    train_samples: number | null;
+    test_rmse: number | null;
+    direction_accuracy: number | null;
+    validation_note?: string;
   };
   top_drivers: { feature: string; importance: number }[];
   sentiment: MarketSentiment | null;
@@ -73,6 +75,10 @@ export default function ForecastOverlay() {
   const [prediction, setPrediction] = useState<PredictionResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const visibleHfForecasts =
+    prediction?.hf_forecasts.filter(
+      (hf) => !(prediction.model.kind === "llm_fallback" && hf.provider === "hf_llm")
+    ) ?? [];
 
   const fetchPrediction = useCallback(async () => {
     setLoading(true);
@@ -99,7 +105,7 @@ export default function ForecastOverlay() {
             Price Forecast
           </h3>
           <p className="text-xs text-zinc-400">
-            ML-driven cotton price predictions with confidence intervals
+            Model-stack forecast with optional HF analyst context
           </p>
         </div>
         <button
@@ -147,16 +153,25 @@ export default function ForecastOverlay() {
             <span>
               Direction accuracy:{" "}
               <span className="text-zinc-200">
-                {(prediction.model.direction_accuracy * 100).toFixed(1)}%
+                {prediction.model.direction_accuracy != null
+                  ? `${(prediction.model.direction_accuracy * 100).toFixed(1)}%`
+                  : "not claimed"}
               </span>
             </span>
             <span>
               Training samples:{" "}
-              <span className="text-zinc-200">{prediction.model.train_samples}</span>
+              <span className="text-zinc-200">
+                {prediction.model.train_samples ?? "n/a"}
+              </span>
             </span>
             <span>
               Base: ${prediction.current_price.toFixed(4)}/lb ({prediction.current_date})
             </span>
+            {prediction.model.validation_note && (
+              <span className="basis-full text-zinc-500">
+                {prediction.model.validation_note}
+              </span>
+            )}
           </div>
 
           {/* Top drivers */}
@@ -200,17 +215,17 @@ export default function ForecastOverlay() {
           )}
 
           {/* HF AI Forecasts */}
-          {prediction.hf_forecasts.length > 0 && (
+          {visibleHfForecasts.length > 0 && (
             <div className="mt-4">
               <h4 className="text-xs font-semibold text-zinc-400 uppercase mb-2">
                 AI Model Forecasts (Hugging Face)
               </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {prediction.hf_forecasts.map((hf, i) => (
+                {visibleHfForecasts.map((hf, i) => (
                   <div key={i} className="rounded-lg bg-zinc-700/30 border border-zinc-700 p-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-zinc-400">
-                        {hf.provider === "hf_llm" ? "LLM Analyst" : "Chronos T5"}
+                        {hf.provider === "hf_llm" ? "LLM Analyst" : "AI Forecast"}
                       </span>
                       <span className={`text-xs font-semibold ${DIRECTION_STYLE[hf.direction]}`}>
                         {DIRECTION_ICON[hf.direction]} {hf.direction.toUpperCase()}

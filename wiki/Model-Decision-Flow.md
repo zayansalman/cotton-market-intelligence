@@ -1,14 +1,14 @@
 # How CMI Makes Procurement Decisions -- End-to-End Flow
 
-This document explains the complete prediction and strategy pipeline: every data source, every feature, every model, how they combine into a unified signal, and how that signal becomes a procurement plan. A reader should be able to trace any CMI recommendation back to its raw data inputs.
+This document explains the prediction and strategy pipeline: every data source, every feature, every model, and how the live app turns a market forecast into procurement timing support. A reader should be able to distinguish current runtime behavior from target ensemble work.
 
 ---
 
 ## 1. Data Sources
 
-CMI ingests data from 21 external sources across three provider categories.
+CMI defines 21 forecasting factor slots across live Yahoo/FRED data and graceful placeholders, plus RSS news feeds for analyst context.
 
-### Yahoo Finance (12 tickers, daily)
+### Yahoo Finance (daily market factors)
 
 | Ticker | Factor ID | What It Is | Why It Matters for Cotton |
 |---|---|---|---|
@@ -19,7 +19,7 @@ CMI ingests data from 21 external sources across three provider categories.
 | `NG=F` | natural_gas | Natural Gas | Second polyester energy input. Natural gas is a feedstock for PTA (purified terephthalic acid), a key polyester precursor. |
 | `^TNX` | us10y | US 10Y Treasury Yield | Tightening monetary conditions reduce speculative commodity positioning and increase inventory carrying costs for physical traders. |
 | `CNY=X` | cny_usd | CNY/USD Exchange Rate | China consumes ~30% of global cotton. CNY depreciation makes imports more expensive for Chinese mills, suppressing demand at the margin. |
-| `^BDI` | bdiy | Baltic Dry Index | Freight cost proxy. Rising freight costs widen the gap between futures price and landed cost, directly affecting procurement economics. |
+| `^BDI` | bdiy | Baltic Dry Index | Freight cost proxy. Rising freight costs affect delivered economics and can change importer demand even when futures are unchanged. |
 | `^GSPC` | sp500 | S&P 500 | Broad risk appetite and demand proxy. Cotton demand tracks economic activity with a lag. |
 | `ZS=F` | soybean | Soybean Futures | Planting competition. US farmers choose between cotton and soybeans based on relative profitability. Rising soybean prices incentivize acreage switching away from cotton. |
 | `ZW=F` | wheat | Wheat Futures | Same planting competition dynamic as soybeans, particularly in the US Southeast. |
@@ -167,7 +167,7 @@ Raw data from the sources above is transformed into 48 features across 9 groups.
 |---|---|
 | `sentiment_score` | Aggregate news sentiment from DistilRoBERTa, scaled -1 to +1 |
 
-**Why it exists:** Sentiment captures information that is not yet reflected in price but is embedded in news text. A bearish USDA WASDE report headline contains information that will move price over the next hours/days. NLP extracts this signal before the price move completes.
+**Why it exists:** Sentiment captures information that is not yet reflected in price but is embedded in news text. In the live app it is primarily sidecar context and strategy/news input; it should not be interpreted as validated model accuracy unless it is present in a trained model path.
 
 ---
 
@@ -175,7 +175,7 @@ Raw data from the sources above is transformed into 48 features across 9 groups.
 
 Eight models, from trivially simple to moderately complex. The simple models exist to keep the complex ones honest.
 
-**Note:** The live prediction route uses an LLM-first approach (Qwen 2.5 7B with full cross-market context). The 8 statistical models below are retained for backtesting, research, and walk-forward validation.
+**Live route note:** `/api/prediction` now runs the 8-model TypeScript stack first and reports real train/test metrics when that stack produces the primary forecast. Qwen 2.5 7B runs as analyst context and fallback. If both are unavailable or implausible, a deterministic momentum/mean-reversion heuristic is used.
 
 ### Baseline Models (4)
 
@@ -195,13 +195,12 @@ Eight models, from trivially simple to moderately complex. The simple models exi
 | **Gradient boosted stumps** | Gradient-boosted ensemble of depth-1 decision trees. | Captures non-linear interactions that ridge cannot -- for example, "high volatility AND low momentum" behaves differently from either condition alone. Depth-1 trees (stumps) are the minimum viable unit of non-linearity: enough to capture threshold effects without overfitting. Boosting ensembles hundreds of weak learners into a strong predictor. |
 | **Gradient boosted trees (depth 3)** | Gradient-boosted ensemble of depth-3 decision trees. | Captures higher-order conditional interactions that stumps miss -- for example, "high vol AND low momentum AND harvest season" is a three-way interaction that depth-1 trees cannot represent. Depth-3 provides complementary signal to stumps while remaining constrained enough to avoid overfitting at ~1000 samples. |
 
-### Hugging Face AI Models (3, non-blocking)
+### Hugging Face AI Context (non-blocking)
 
 | Model | Role |
 |---|---|
-| **DistilRoBERTa** (financial sentiment) | Classifies news headlines as bullish/bearish/neutral. Produces the `sentiment_score` feature and feeds the ensemble's sentiment input. |
-| **Qwen 2.5 7B Instruct** | Acts as an AI analyst: reads market data and headlines, produces a directional forecast with qualitative reasoning. Feeds the ensemble's LLM input. |
-| **Chronos T5** (time-series foundation model) | Pure time-series forecast using a pre-trained foundation model. Provides an alternative forecast that does not share feature engineering assumptions with the ridge/GBM models. |
+| **DistilRoBERTa** (financial sentiment) | Classifies news headlines as bullish/bearish/neutral. Produces sidecar context and feeds strategy/news analysis when available. |
+| **Qwen 2.5 7B Instruct** | Acts as an AI analyst: reads market data and headlines, produces a directional forecast with qualitative reasoning. Used as sidecar context and fallback in `/api/prediction`; strategy uses it when `HF_TOKEN` is configured. |
 
 ---
 
@@ -239,15 +238,15 @@ Each model receives a traffic-light rating per horizon:
 - **Amber:** Beats naive on one metric but not all three.
 - **Red:** Fails to beat naive on any metric.
 
-Only green-rated models contribute to the ensemble forecast. This is the go/no-go gate that prevents overfit models from reaching the UI.
+The scorecard is the evaluation framework. The live route selects a champion from the trained stack and then applies plausibility checks before a forecast reaches the UI. Fallback paths explicitly report that no historical model validation metrics are claimed.
 
 ---
 
-## 5. Ensemble Signal
+## 5. Signal Combination
 
-The unified signal combines four independent information sources into a single directional forecast with confidence.
+`computeUnifiedSignal` supports a four-source target ensemble. The live prediction endpoint currently treats the model-stack forecast as primary and shows Qwen/sentiment as sidecar context. The live strategy endpoint wires heuristic, sentiment, and news-analysis legs; the model and LLM forecast legs are not yet connected to strategy.
 
-### Source Weights
+### Target Source Weights
 
 | Source | Weight | Rationale |
 |---|---|---|
@@ -295,13 +294,13 @@ The ensemble's weighted return maps to procurement signals:
 
 ### Graceful Degradation
 
-When a source is unavailable (e.g., HF API is down, model has not been trained), its weight is redistributed proportionally across available sources. The heuristic is always available (zero external dependencies), so the system always produces a signal.
+When a source is unavailable, the app degrades rather than blocking the user. `/api/prediction` uses model stack -> Qwen -> heuristic. `/api/strategy` uses Hugging Face when available and falls back to the constraint-aware heuristic.
 
 ---
 
 ## 6. Strategy Generation
 
-The unified signal feeds into the strategy engine, which translates a directional forecast into a concrete procurement plan.
+The strategy engine translates price regime, volatility, headline context, and purchaser constraints into a concrete procurement plan. Full model-stack forecast wiring into strategy is a tracked next step, not current runtime behavior.
 
 ### Signal to Allocation Timing
 
@@ -346,7 +345,7 @@ The raw allocation is modified by purchaser-specific constraints:
 
 ### Decision Transparency
 
-Every strategy response includes `decision_drivers` -- the full decomposition of what each source contributed:
+When the unified-signal overlay is available, strategy responses include `decision_drivers` showing what each active source contributed. The full four-leg example below is the target shape:
 
 ```
 decision_drivers: [
@@ -391,7 +390,7 @@ This allows any user to trace the final BUY signal back through the ensemble to 
                         RAW DATA SOURCES
   +------------------+  +----------------+  +------------------+
   | Yahoo Finance    |  | FRED           |  | RSS Feeds (7)    |
-  | 12 tickers       |  | T5YIE          |  | cottongrower     |
+  | factor feeds     |  | T5YIE          |  | cottongrower     |
   | CT=F, DXY, VIX,  |  | MPMICNMA669S   |  | textileworld     |
   | CL=F, NG=F, ^TNX |  |                |  | usda, worldbank  |
   | CNY=X, ^BDI,     |  |                |  | reuters, icac    |
@@ -419,33 +418,29 @@ This allows any user to trace the final BUY signal back through the ensemble to 
            |                                     |
            v                                     v
   +--------------------+               +--------------------+
-  | trainAndEvaluate() |               | HF AI Models       |
+  | trainAndEvaluate() |               | HF AI Context      |
   |                    |               |                    |
   | 4 baselines:       |               | DistilRoBERTa      |
   |   naive, mean,     |               |   -> sentiment     |
   |   MA, seasonal     |               |                    |
   |                    |               | Qwen 2.5 7B        |
-  | 4 ML models:       |               |   -> LLM forecast  |
-  |   ridge, elastic   |               |                    |
+  | 4 ML models:       |               |   -> analyst       |
+  |   ridge, elastic   |               |      context       |
   |   net, GBM stumps, |               |                    |
   |   GBM trees        |               |                    |
-  |                    |               | Chronos T5         |
-  | Walk-forward       |               |   -> time-series   |
-  | validation         |               |      forecast      |
+  | Walk-forward       |               |                    |
+  | validation         |               |                    |
   | (expanding window, |               |                    |
   |  21-day step)      |               |                    |
   +--------+-----------+               +---------+----------+
            |                                     |
            v                                     v
   +----------------------------------------------------------+
-  |              computeUnifiedSignal()                        |
+  |              Live Forecast + Strategy Signals              |
   |                                                            |
-  |  Model forecast -------- 40% ---+                          |
-  |  Heuristic ------------- 25% ---+-> weighted return        |
-  |  LLM analyst ----------- 20% ---+   -> direction           |
-  |  Sentiment ------------- 15% ---+   -> confidence          |
-  |                                      -> signal             |
-  |                                      -> decision_drivers   |
+  |  Prediction: model stack primary, Qwen/heuristic fallback  |
+  |  Strategy: heuristic baseline + sentiment/news overlay     |
+  |  Target: four-source computeUnifiedSignal integration      |
   +---------------------------+------------------------------+
                               |
                               v

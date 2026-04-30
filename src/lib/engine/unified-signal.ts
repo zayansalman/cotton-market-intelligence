@@ -1,7 +1,11 @@
 /**
- * Unified prediction signal that combines all forecast sources (#40).
+ * Unified prediction signal helper for the target all-source ensemble (#40).
  *
- * Ensemble weighting:
+ * The live strategy route currently calls this with the available heuristic,
+ * sentiment, and news-analysis inputs. Model and LLM forecast inputs are
+ * supported here but not yet fully wired into `/api/strategy`.
+ *
+ * Target ensemble weighting:
  * - Model forecast: 40% (walk-forward validated, most data)
  * - LLM analyst: 20% (qualitative context, news interpretation)
  * - Benchmarks/heuristic: 25% (simple, robust baseline)

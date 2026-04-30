@@ -59,6 +59,9 @@ const SAFE_MESSAGES: Record<string, string> = {
   prices: "Market data temporarily unavailable.",
   headlines: "News feed temporarily unavailable.",
   landed_cost: "Cost calculation failed.",
+  prediction: "Price prediction failed. Please try again.",
+  pipeline: "Forecasting pipeline failed. Please try again.",
+  backtest: "Backtest failed. Please try again.",
 };
 
 /**

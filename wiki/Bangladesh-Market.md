@@ -20,7 +20,7 @@ The current CMI MVP is aligned to this reality.
 
 ## Gaps to close for Bangladesh depth
 
-1. Add local landed cost layer (futures + basis + freight + FX)
+1. Keep landed-cost logic buyer-specific and optional rather than central to market prediction
 2. Add port/logistics disruption signals
 3. Add supplier-specific constraints and lead times
 4. Add multi-mill view for group procurement teams

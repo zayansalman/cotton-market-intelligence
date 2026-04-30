@@ -26,7 +26,14 @@ interface PredictionResponse {
   current_price: number;
   current_date: string;
   forecasts: PredictionForecast[];
-  model: { name: string; test_rmse: number; direction_accuracy: number };
+  model: {
+    id: string;
+    name: string;
+    kind: "model_stack" | "llm_fallback" | "heuristic_fallback";
+    test_rmse: number | null;
+    direction_accuracy: number | null;
+    validation_note?: string;
+  };
   top_drivers: { feature: string; importance: number }[];
   hf_forecasts?: HFForecast[];
   sentiment?: { label: string; aggregate_score: number; n_headlines: number } | null;
@@ -103,27 +110,36 @@ export function useForecast() {
       // Build attribution sources
       const sources: ForecastAttribution["sources"] = [];
 
-      // 1. Local model forecast
+      // 1. Primary forecast source
       const localReturn = primary.predicted_return;
       const localDir = localReturn > 0.003 ? "up" : localReturn < -0.003 ? "down" : "flat";
+      const primarySourceName =
+        data.model.kind === "model_stack"
+          ? `Quant Model (${data.model.name})`
+          : data.model.kind === "llm_fallback"
+            ? "LLM Analyst (Qwen 2.5 7B)"
+            : "Heuristic fallback";
+      const primaryAccuracy =
+        data.model.direction_accuracy != null
+          ? `${(data.model.direction_accuracy * 100).toFixed(0)}% directional accuracy`
+          : data.model.validation_note ?? "No historical validation metrics claimed";
       sources.push({
-        name: `Quant Model (${data.model.name})`,
-        weight: "40%",
+        name: primarySourceName,
+        weight: data.model.kind === "model_stack" ? "primary model" : "fallback",
         direction: localDir as "up" | "down" | "flat",
-        detail: `${(localReturn * 100).toFixed(2)}% predicted return, ${(data.model.direction_accuracy * 100).toFixed(0)}% directional accuracy`,
+        detail: `${(localReturn * 100).toFixed(2)}% predicted return, ${primaryAccuracy}`,
       });
 
       // 2. HF forecasts
-      let hfBlendReturn = 0;
-      let hfCount = 0;
       if (data.hf_forecasts && data.hf_forecasts.length > 0) {
         for (const hf of data.hf_forecasts) {
+          if (data.model.kind === "llm_fallback" && hf.provider === "hf_llm") {
+            continue;
+          }
           if (hf.predicted_price > 0) {
             const hfReturn = (hf.predicted_price - startPrice) / startPrice;
             // Cap HF returns to realistic bounds
             const cappedReturn = Math.max(-MAX_21D_RETURN, Math.min(MAX_21D_RETURN, hfReturn));
-            hfBlendReturn += cappedReturn;
-            hfCount++;
             sources.push({
               name: hf.provider === "hf_llm" ? "LLM Analyst (Qwen 2.5 7B)" : `AI Model (${hf.model_used})`,
               weight: hf.provider === "hf_llm" ? "20%" : "10%",
@@ -132,7 +148,6 @@ export function useForecast() {
             });
           }
         }
-        if (hfCount > 0) hfBlendReturn /= hfCount;
       }
 
       // 3. Sentiment
@@ -178,7 +193,10 @@ export function useForecast() {
       setAttribution({
         sources,
         model_name: data.model.name,
-        model_accuracy: `Confidence: ${data.confidence ?? "?"}%`,
+        model_accuracy:
+          data.model.direction_accuracy != null
+            ? `Direction accuracy: ${(data.model.direction_accuracy * 100).toFixed(1)}%`
+            : `Confidence: ${data.confidence ?? "?"}%`,
         top_features: (data.top_drivers ?? []).slice(0, 6).map((d) => d.feature.replace(/_/g, " ")),
         methodology: data.methodology ?? null,
         reasoning: data.reasoning ?? "",

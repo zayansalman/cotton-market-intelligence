@@ -1,6 +1,6 @@
 # Cotton Market Intelligence (CMI) — Wiki
 
-Production cotton procurement intelligence platform for South Asian spinning mills. AI-powered strategy generation, price prediction, and portfolio management.
+Production cotton market intelligence platform for South Asian spinning mills. Model-stack price prediction, optional AI analyst context, strategy generation, and portfolio management.
 
 **Live:** https://cmi-notebooks.vercel.app | **Dev:** https://cmi-notebooks-dev.vercel.app
 

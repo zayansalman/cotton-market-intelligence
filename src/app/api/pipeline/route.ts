@@ -2,7 +2,7 @@
  * /api/pipeline — Run data pipeline and return all forecasting factors.
  *
  * GET — returns PipelineOutput with all factors, quality metrics, and target.
- * Heavy endpoint (multiple external API calls) — shares strategy rate limits.
+ * Heavy endpoint (multiple external API calls) — uses expensive-route limits.
  */
 
 import { NextResponse } from "next/server";
@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const abuse = checkAbuse(req);
   if (abuse.blocked) return abuseBlockedResponse(abuse);
 
-  const rateLimit = evaluateRequestRateLimit(req, "strategy");
+  const rateLimit = evaluateRequestRateLimit(req, "pipeline");
   if (!rateLimit.allowed) return rateLimitExceededResponse(rateLimit);
 
   try {
@@ -31,7 +31,7 @@ export async function GET(req: Request) {
     );
   } catch (e) {
     return applyRateLimitHeaders(
-      safeErrorResponse(e, "strategy"),
+      safeErrorResponse(e, "pipeline"),
       rateLimit.headers
     );
   }

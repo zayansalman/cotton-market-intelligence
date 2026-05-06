@@ -2,11 +2,10 @@
 
 import { useState, useCallback, useEffect } from "react";
 import type {
-  BacktestPrediction,
   ForecastOverlayData,
   ForecastPoint,
-  PredictionHistoryPoint,
   PredictionPerformanceMetrics,
+  PreviousForecastOverlayData,
 } from "@/components/PriceChart";
 
 interface PredictionForecast {
@@ -61,8 +60,11 @@ interface PredictionResponse {
 }
 
 interface ForecastHistoryResponse {
-  predictions?: PredictionHistoryPoint[];
   metrics?: PredictionPerformanceMetrics;
+}
+
+interface PreviousForecastResponse {
+  forecasts?: PreviousForecastOverlayData[];
 }
 
 /** Forecast attribution — what drove the prediction and how much. */
@@ -110,8 +112,7 @@ const MAX_21D_RETURN = 0.12; // ±12%
 export function useForecast() {
   const [forecast, setForecast] = useState<ForecastOverlayData | undefined>();
   const [attribution, setAttribution] = useState<ForecastAttribution | null>(null);
-  const [backtestPredictions, setBacktestPredictions] = useState<BacktestPrediction[]>([]);
-  const [predictionHistory, setPredictionHistory] = useState<PredictionHistoryPoint[]>([]);
+  const [previousForecasts, setPreviousForecasts] = useState<PreviousForecastOverlayData[]>([]);
   const [predictionPerformance, setPredictionPerformance] =
     useState<PredictionPerformanceMetrics | null>(null);
   const [loading, setLoading] = useState(false);
@@ -119,19 +120,28 @@ export function useForecast() {
   const loadPredictionHistory = useCallback(async () => {
     const fhRes = await fetch("/api/forecast-history").catch(() => null);
     if (!fhRes?.ok) {
-      setPredictionHistory([]);
       setPredictionPerformance(null);
       return;
     }
 
     const fhData: ForecastHistoryResponse = await fhRes.json();
-    setPredictionHistory(fhData.predictions ?? []);
     setPredictionPerformance(fhData.metrics ?? null);
   }, []);
 
+  const loadPreviousForecasts = useCallback(async () => {
+    const prevRes = await fetch("/api/previous-forecast?months_ago=1&horizon=21d").catch(() => null);
+    if (!prevRes?.ok) {
+      setPreviousForecasts([]);
+      return;
+    }
+
+    const prevData: PreviousForecastResponse = await prevRes.json();
+    setPreviousForecasts(prevData.forecasts ?? []);
+  }, []);
+
   useEffect(() => {
-    void loadPredictionHistory();
-  }, [loadPredictionHistory]);
+    void Promise.all([loadPredictionHistory(), loadPreviousForecasts()]);
+  }, [loadPredictionHistory, loadPreviousForecasts]);
 
   const fetchForecast = useCallback(async () => {
     setLoading(true);
@@ -259,34 +269,13 @@ export function useForecast() {
         risk: data.risk ?? "",
       });
 
-      // Fetch strategy backtest + stored forecast history for chart overlays.
+      // Refresh stored metrics + prior forecast path after the live forecast stores.
       try {
-        const [btRes] = await Promise.all([
-          fetch(`/api/backtest?tonnage=2000&months=6&step_months=3`).catch(() => null),
+        await Promise.all([
           loadPredictionHistory().catch(() => undefined),
+          loadPreviousForecasts().catch(() => undefined),
         ]);
-
-        // Strategy backtest points
-        if (btRes?.ok) {
-          const btData = await btRes.json();
-          if (btData.steps) {
-            setBacktestPredictions(
-              btData.steps.map(
-                (s: { decision_date: string; price_at_decision: number; weighted_exec_price: number; savings_pct: number }) => ({
-                  date: s.decision_date,
-                  predicted_price: s.weighted_exec_price,
-                  actual_price: s.price_at_decision,
-                  direction_correct: s.savings_pct > 0,
-                })
-              )
-            );
-          } else {
-            setBacktestPredictions([]);
-          }
-        } else {
-          setBacktestPredictions([]);
-        }
-      } catch { /* backtest/history overlay is non-fatal */ }
+      } catch { /* Previous-forecast overlays are non-fatal. */ }
     } catch (e) {
       console.error("Forecast fetch failed:", e);
       setForecast(undefined);
@@ -294,13 +283,12 @@ export function useForecast() {
     } finally {
       setLoading(false);
     }
-  }, [loadPredictionHistory]);
+  }, [loadPredictionHistory, loadPreviousForecasts]);
 
   return {
     forecast,
     attribution,
-    backtestPredictions,
-    predictionHistory,
+    previousForecasts,
     predictionPerformance,
     forecastLoading: loading,
     fetchForecast,

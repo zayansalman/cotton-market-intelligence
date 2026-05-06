@@ -41,8 +41,7 @@ export default function Home() {
   const {
     forecast,
     attribution,
-    backtestPredictions,
-    predictionHistory,
+    previousForecasts,
     predictionPerformance,
     forecastLoading,
     fetchForecast,
@@ -240,8 +239,7 @@ export default function Home() {
                 prices={displayedPrices}
                 benchmarks={priceData.benchmarks}
                 forecast={forecast}
-                backtestPredictions={backtestPredictions}
-                predictionHistory={predictionHistory}
+                previousForecasts={previousForecasts}
                 predictionPerformance={predictionPerformance}
               />
 

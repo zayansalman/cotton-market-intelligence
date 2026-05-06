@@ -46,14 +46,13 @@ interface ChartPoint {
   forecast: number | null;
   forecast_upper: number | null;
   forecast_lower: number | null;
-  backtest_pred?: number | null;
-  prediction_history?: number | null;
+  [key: string]: string | number | null | undefined;
 }
 
 function mergeData(
   prices: PricePoint[],
   forecast: ForecastOverlayData | undefined,
-  predictionHistory: PredictionHistoryPoint[] | undefined
+  previousForecasts: PreviousForecastOverlayData[] | undefined
 ): ChartPoint[] {
   const points: ChartPoint[] = prices.map((p) => ({
     date: p.date,
@@ -94,12 +93,13 @@ function mergeData(
     }
   }
 
-  if (predictionHistory?.length) {
-    for (const prediction of predictionHistory) {
-      let point = pointByDate.get(prediction.date);
-      if (!point) {
-        point = {
-          date: prediction.date,
+  previousForecasts?.forEach((previousForecast, forecastIndex) => {
+    const key = `previous_forecast_${forecastIndex}`;
+    for (const forecastPoint of previousForecast.points) {
+      let chartPoint = pointByDate.get(forecastPoint.date);
+      if (!chartPoint) {
+        chartPoint = {
+          date: forecastPoint.date,
           close: null,
           ma50: null,
           ma200: null,
@@ -107,12 +107,12 @@ function mergeData(
           forecast_upper: null,
           forecast_lower: null,
         };
-        points.push(point);
-        pointByDate.set(prediction.date, point);
+        points.push(chartPoint);
+        pointByDate.set(forecastPoint.date, chartPoint);
       }
-      point.prediction_history = prediction.predicted_price;
+      chartPoint[key] = forecastPoint.predicted_price;
     }
-  }
+  });
 
   return points.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -121,28 +121,19 @@ function mergeData(
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-/** Backtest prediction point — model's historical prediction at a given date. */
-export interface BacktestPrediction {
-  date: string;
-  predicted_price: number;
-  actual_price: number;
-  direction_correct: boolean;
-}
-
-/** Stored forecast made by the live prediction API and later compared to actual market prices. */
-export interface PredictionHistoryPoint {
-  date: string;
-  target_date?: string;
-  prediction_date?: string;
-  created_at?: string;
-  horizon?: string;
-  current_price?: number | null;
+export interface PreviousForecastOverlayData {
+  id: string;
+  label: string;
+  as_of_date: string;
+  target_date: string;
+  model_name: string;
+  direction: "up" | "down" | "flat";
   predicted_price: number;
   actual_price: number | null;
-  direction_correct: boolean | null;
   error_pct: number | null;
-  model_id?: string;
-  model_name?: string | null;
+  direction_correct: boolean | null;
+  reasoning: string;
+  points: ForecastPoint[];
 }
 
 export interface PredictionPerformanceMetrics {
@@ -158,43 +149,30 @@ export default function PriceChart({
   prices,
   benchmarks,
   forecast,
-  backtestPredictions,
-  predictionHistory,
+  previousForecasts,
   predictionPerformance,
 }: {
   prices: PricePoint[];
   benchmarks: Benchmarks;
   forecast?: ForecastOverlayData;
-  backtestPredictions?: BacktestPrediction[];
-  predictionHistory?: PredictionHistoryPoint[];
+  previousForecasts?: PreviousForecastOverlayData[];
   predictionPerformance?: PredictionPerformanceMetrics | null;
 }) {
   const [showMA50, setShowMA50] = useState(true);
   const [showMA200, setShowMA200] = useState(true);
   const [showForecast, setShowForecast] = useState(true);
-  const [showPredictionHistory, setShowPredictionHistory] = useState(true);
-  const [showBacktest, setShowBacktest] = useState(false);
+  const [showPreviousForecasts, setShowPreviousForecasts] = useState(true);
 
   const hasForecast = forecast && forecast.points.length > 0 && showForecast;
-  const hasPredictionHistory =
-    predictionHistory && predictionHistory.length > 0 && showPredictionHistory;
+  const visiblePreviousForecasts = showPreviousForecasts
+    ? previousForecasts?.slice(0, 3) ?? []
+    : [];
   const data = mergeData(
     prices,
     forecast,
-    hasPredictionHistory ? predictionHistory : undefined
+    visiblePreviousForecasts
   );
-  const hasBacktest = backtestPredictions && backtestPredictions.length > 0 && showBacktest;
-
-  // Merge backtest predictions into chart data
-  if (hasBacktest) {
-    const btMap = new Map(backtestPredictions!.map((p) => [p.date, p]));
-    for (const point of data) {
-      const bt = btMap.get(point.date);
-      if (bt) {
-        point.backtest_pred = bt.predicted_price;
-      }
-    }
-  }
+  const hasPreviousForecasts = visiblePreviousForecasts.length > 0;
 
   // Color for forecast line based on direction
   const forecastColor =
@@ -216,6 +194,19 @@ export default function PriceChart({
             : null,
         ].filter(Boolean).join(" | ")
       : null;
+  const previousSummary = previousForecasts?.[0]
+    ? [
+        `${previousForecasts[0].label} -> ${previousForecasts[0].target_date}`,
+        `forecast $${previousForecasts[0].predicted_price.toFixed(4)}`,
+        previousForecasts[0].actual_price != null
+          ? `actual $${previousForecasts[0].actual_price.toFixed(4)}`
+          : null,
+        previousForecasts[0].error_pct != null
+          ? `${Math.abs(previousForecasts[0].error_pct).toFixed(2)}% error`
+          : null,
+      ].filter(Boolean).join(" | ")
+    : null;
+  const previousColors = ["#38bdf8", "#2dd4bf", "#fbbf24"];
 
   return (
     <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
@@ -225,8 +216,7 @@ export default function PriceChart({
           { label: "50d MA", active: showMA50, toggle: () => setShowMA50(!showMA50), color: "#ff9100" },
           { label: "200d MA", active: showMA200, toggle: () => setShowMA200(!showMA200), color: "#ff1744" },
           ...(forecast?.points.length ? [{ label: "Forecast", active: showForecast, toggle: () => setShowForecast(!showForecast), color: forecastColor }] : []),
-          ...(predictionHistory?.length ? [{ label: "Previous Forecasts", active: showPredictionHistory, toggle: () => setShowPredictionHistory(!showPredictionHistory), color: "#38bdf8" }] : []),
-          ...(backtestPredictions?.length ? [{ label: "Strategy Backtest", active: showBacktest, toggle: () => setShowBacktest(!showBacktest), color: "#a78bfa" }] : []),
+          ...(previousForecasts?.length ? [{ label: "Previous Forecasts", active: showPreviousForecasts, toggle: () => setShowPreviousForecasts(!showPreviousForecasts), color: "#38bdf8" }] : []),
         ].map((t) => (
           <button
             key={t.label}
@@ -259,7 +249,13 @@ export default function PriceChart({
       {performanceSummary && (
         <div className="flex items-center gap-2 mb-2 text-xs text-zinc-400">
           <span className="w-2.5 h-2.5 rounded-full bg-sky-400" />
-          <span>Previous forecasts: {performanceSummary}</span>
+          <span>Stored forecast history: {performanceSummary}</span>
+        </div>
+      )}
+      {previousSummary && (
+        <div className="flex items-center gap-2 mb-2 text-xs text-zinc-400">
+          <span className="w-2.5 h-2.5 rounded-full bg-sky-400" />
+          <span>Previous forecast line: {previousSummary}</span>
         </div>
       )}
       <ResponsiveContainer width="100%" height={400}>
@@ -354,33 +350,22 @@ export default function PriceChart({
             />
           )}
 
-          {/* Stored forecast history (toggleable) */}
-          {hasPredictionHistory && (
-            <Line
-              type="monotone"
-              dataKey="prediction_history"
-              name="Previous Forecasts"
-              stroke="#38bdf8"
-              strokeWidth={2}
-              strokeDasharray="4 2"
-              dot={{ r: 2.5, fill: "#38bdf8" }}
-              connectNulls={false}
-            />
-          )}
-
-          {/* Strategy backtest predictions (toggleable) */}
-          {hasBacktest && (
-            <Line
-              type="monotone"
-              dataKey="backtest_pred"
-              name="Strategy Backtest"
-              stroke="#a78bfa"
-              strokeWidth={1.5}
-              strokeDasharray="3 2"
-              dot={{ r: 2, fill: "#a78bfa" }}
-              connectNulls={false}
-            />
-          )}
+          {/* Previous market forecast paths (toggleable) */}
+          {hasPreviousForecasts &&
+            visiblePreviousForecasts.map((previousForecast, index) => (
+              <Line
+                key={previousForecast.id}
+                type="monotone"
+                dataKey={`previous_forecast_${index}`}
+                name={previousForecast.label}
+                stroke={previousColors[index] ?? "#38bdf8"}
+                strokeWidth={2}
+                strokeDasharray="4 2"
+                dot={false}
+                activeDot={{ r: 4 }}
+                connectNulls={false}
+              />
+            ))}
 
           {/* Forecast confidence band */}
           {hasForecast && (

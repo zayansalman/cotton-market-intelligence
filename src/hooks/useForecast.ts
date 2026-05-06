@@ -1,7 +1,13 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import type { ForecastOverlayData, ForecastPoint, BacktestPrediction } from "@/components/PriceChart";
+import { useState, useCallback, useEffect } from "react";
+import type {
+  BacktestPrediction,
+  ForecastOverlayData,
+  ForecastPoint,
+  PredictionHistoryPoint,
+  PredictionPerformanceMetrics,
+} from "@/components/PriceChart";
 
 interface PredictionForecast {
   horizon: string;
@@ -54,6 +60,11 @@ interface PredictionResponse {
   confidence?: number;
 }
 
+interface ForecastHistoryResponse {
+  predictions?: PredictionHistoryPoint[];
+  metrics?: PredictionPerformanceMetrics;
+}
+
 /** Forecast attribution — what drove the prediction and how much. */
 export interface MethodologySignal {
   signal: string;
@@ -100,7 +111,27 @@ export function useForecast() {
   const [forecast, setForecast] = useState<ForecastOverlayData | undefined>();
   const [attribution, setAttribution] = useState<ForecastAttribution | null>(null);
   const [backtestPredictions, setBacktestPredictions] = useState<BacktestPrediction[]>([]);
+  const [predictionHistory, setPredictionHistory] = useState<PredictionHistoryPoint[]>([]);
+  const [predictionPerformance, setPredictionPerformance] =
+    useState<PredictionPerformanceMetrics | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const loadPredictionHistory = useCallback(async () => {
+    const fhRes = await fetch("/api/forecast-history").catch(() => null);
+    if (!fhRes?.ok) {
+      setPredictionHistory([]);
+      setPredictionPerformance(null);
+      return;
+    }
+
+    const fhData: ForecastHistoryResponse = await fhRes.json();
+    setPredictionHistory(fhData.predictions ?? []);
+    setPredictionPerformance(fhData.metrics ?? null);
+  }, []);
+
+  useEffect(() => {
+    void loadPredictionHistory();
+  }, [loadPredictionHistory]);
 
   const fetchForecast = useCallback(async () => {
     setLoading(true);
@@ -228,44 +259,33 @@ export function useForecast() {
         risk: data.risk ?? "",
       });
 
-      // Fetch strategy backtest + forecast history for chart overlay
+      // Fetch strategy backtest + stored forecast history for chart overlays.
       try {
-        const [btRes, fhRes] = await Promise.all([
+        const [btRes] = await Promise.all([
           fetch(`/api/backtest?tonnage=2000&months=6&step_months=3`).catch(() => null),
-          fetch(`/api/forecast-history`).catch(() => null),
+          loadPredictionHistory().catch(() => undefined),
         ]);
-
-        let allPoints: BacktestPrediction[] = [];
 
         // Strategy backtest points
         if (btRes?.ok) {
           const btData = await btRes.json();
           if (btData.steps) {
-            allPoints = btData.steps.map(
-              (s: { decision_date: string; price_at_decision: number; weighted_exec_price: number; savings_pct: number }) => ({
-                date: s.decision_date,
-                predicted_price: s.weighted_exec_price,
-                actual_price: s.price_at_decision,
-                direction_correct: s.savings_pct > 0,
-              })
+            setBacktestPredictions(
+              btData.steps.map(
+                (s: { decision_date: string; price_at_decision: number; weighted_exec_price: number; savings_pct: number }) => ({
+                  date: s.decision_date,
+                  predicted_price: s.weighted_exec_price,
+                  actual_price: s.price_at_decision,
+                  direction_correct: s.savings_pct > 0,
+                })
+              )
             );
+          } else {
+            setBacktestPredictions([]);
           }
+        } else {
+          setBacktestPredictions([]);
         }
-
-        // Forecast vs reality points (from Supabase)
-        if (fhRes?.ok) {
-          const fhData = await fhRes.json();
-          if (fhData.predictions?.length) {
-            const existingDates = new Set(allPoints.map((p) => p.date));
-            for (const p of fhData.predictions as BacktestPrediction[]) {
-              if (!existingDates.has(p.date)) {
-                allPoints.push(p);
-              }
-            }
-          }
-        }
-
-        setBacktestPredictions(allPoints);
       } catch { /* backtest/history overlay is non-fatal */ }
     } catch (e) {
       console.error("Forecast fetch failed:", e);
@@ -274,7 +294,15 @@ export function useForecast() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadPredictionHistory]);
 
-  return { forecast, attribution, backtestPredictions, forecastLoading: loading, fetchForecast };
+  return {
+    forecast,
+    attribution,
+    backtestPredictions,
+    predictionHistory,
+    predictionPerformance,
+    forecastLoading: loading,
+    fetchForecast,
+  };
 }

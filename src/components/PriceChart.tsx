@@ -47,11 +47,13 @@ interface ChartPoint {
   forecast_upper: number | null;
   forecast_lower: number | null;
   backtest_pred?: number | null;
+  prediction_history?: number | null;
 }
 
 function mergeData(
   prices: PricePoint[],
-  forecast: ForecastOverlayData | undefined
+  forecast: ForecastOverlayData | undefined,
+  predictionHistory: PredictionHistoryPoint[] | undefined
 ): ChartPoint[] {
   const points: ChartPoint[] = prices.map((p) => ({
     date: p.date,
@@ -62,34 +64,57 @@ function mergeData(
     forecast_upper: null,
     forecast_lower: null,
   }));
+  const pointByDate = new Map(points.map((point) => [point.date, point]));
 
-  if (!forecast || forecast.points.length === 0) return points;
+  if (forecast && forecast.points.length > 0) {
+    // Add a bridge point: last historical price = first forecast point
+    const lastPrice = prices[prices.length - 1];
+    if (lastPrice) {
+      points[points.length - 1].forecast = lastPrice.close;
+      points[points.length - 1].forecast_upper = lastPrice.close;
+      points[points.length - 1].forecast_lower = lastPrice.close;
+    }
 
-  // Add a bridge point: last historical price = first forecast point
-  const lastPrice = prices[prices.length - 1];
-  if (lastPrice) {
-    points[points.length - 1].forecast = lastPrice.close;
-    points[points.length - 1].forecast_upper = lastPrice.close;
-    points[points.length - 1].forecast_lower = lastPrice.close;
+    // Append forecast points beyond historical data
+    for (const fp of forecast.points) {
+      // Skip if date already exists in historical
+      if (pointByDate.has(fp.date)) continue;
+
+      const point: ChartPoint = {
+        date: fp.date,
+        close: null,
+        ma50: null,
+        ma200: null,
+        forecast: fp.predicted_price,
+        forecast_upper: fp.upper_price,
+        forecast_lower: fp.lower_price,
+      };
+      points.push(point);
+      pointByDate.set(fp.date, point);
+    }
   }
 
-  // Append forecast points beyond historical data
-  for (const fp of forecast.points) {
-    // Skip if date already exists in historical
-    if (points.some((p) => p.date === fp.date)) continue;
-
-    points.push({
-      date: fp.date,
-      close: null,
-      ma50: null,
-      ma200: null,
-      forecast: fp.predicted_price,
-      forecast_upper: fp.upper_price,
-      forecast_lower: fp.lower_price,
-    });
+  if (predictionHistory?.length) {
+    for (const prediction of predictionHistory) {
+      let point = pointByDate.get(prediction.date);
+      if (!point) {
+        point = {
+          date: prediction.date,
+          close: null,
+          ma50: null,
+          ma200: null,
+          forecast: null,
+          forecast_upper: null,
+          forecast_lower: null,
+        };
+        points.push(point);
+        pointByDate.set(prediction.date, point);
+      }
+      point.prediction_history = prediction.predicted_price;
+    }
   }
 
-  return points;
+  return points.sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /* ------------------------------------------------------------------ */
@@ -104,24 +129,60 @@ export interface BacktestPrediction {
   direction_correct: boolean;
 }
 
+/** Stored forecast made by the live prediction API and later compared to actual market prices. */
+export interface PredictionHistoryPoint {
+  date: string;
+  target_date?: string;
+  prediction_date?: string;
+  created_at?: string;
+  horizon?: string;
+  current_price?: number | null;
+  predicted_price: number;
+  actual_price: number | null;
+  direction_correct: boolean | null;
+  error_pct: number | null;
+  model_id?: string;
+  model_name?: string | null;
+}
+
+export interface PredictionPerformanceMetrics {
+  total: number;
+  resolved: number;
+  pending: number;
+  direction_accuracy: number | null;
+  mean_absolute_error_pct: number | null;
+  latest_absolute_error_pct: number | null;
+}
+
 export default function PriceChart({
   prices,
   benchmarks,
   forecast,
   backtestPredictions,
+  predictionHistory,
+  predictionPerformance,
 }: {
   prices: PricePoint[];
   benchmarks: Benchmarks;
   forecast?: ForecastOverlayData;
   backtestPredictions?: BacktestPrediction[];
+  predictionHistory?: PredictionHistoryPoint[];
+  predictionPerformance?: PredictionPerformanceMetrics | null;
 }) {
   const [showMA50, setShowMA50] = useState(true);
   const [showMA200, setShowMA200] = useState(true);
   const [showForecast, setShowForecast] = useState(true);
-  const [showBacktest, setShowBacktest] = useState(true);
+  const [showPredictionHistory, setShowPredictionHistory] = useState(true);
+  const [showBacktest, setShowBacktest] = useState(false);
 
-  const data = mergeData(prices, forecast);
   const hasForecast = forecast && forecast.points.length > 0 && showForecast;
+  const hasPredictionHistory =
+    predictionHistory && predictionHistory.length > 0 && showPredictionHistory;
+  const data = mergeData(
+    prices,
+    forecast,
+    hasPredictionHistory ? predictionHistory : undefined
+  );
   const hasBacktest = backtestPredictions && backtestPredictions.length > 0 && showBacktest;
 
   // Merge backtest predictions into chart data
@@ -142,6 +203,19 @@ export default function PriceChart({
       : forecast?.direction === "down"
         ? "#ef4444"
         : "#a78bfa";
+  const performanceSummary =
+    predictionPerformance && predictionPerformance.total > 0
+      ? [
+          `${predictionPerformance.resolved} resolved`,
+          `${predictionPerformance.pending} pending`,
+          predictionPerformance.direction_accuracy != null
+            ? `${(predictionPerformance.direction_accuracy * 100).toFixed(0)}% direction hit rate`
+            : null,
+          predictionPerformance.mean_absolute_error_pct != null
+            ? `${predictionPerformance.mean_absolute_error_pct.toFixed(2)}% mean abs error`
+            : null,
+        ].filter(Boolean).join(" | ")
+      : null;
 
   return (
     <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
@@ -151,7 +225,8 @@ export default function PriceChart({
           { label: "50d MA", active: showMA50, toggle: () => setShowMA50(!showMA50), color: "#ff9100" },
           { label: "200d MA", active: showMA200, toggle: () => setShowMA200(!showMA200), color: "#ff1744" },
           ...(forecast?.points.length ? [{ label: "Forecast", active: showForecast, toggle: () => setShowForecast(!showForecast), color: forecastColor }] : []),
-          ...(backtestPredictions?.length ? [{ label: "Backtest", active: showBacktest, toggle: () => setShowBacktest(!showBacktest), color: "#a78bfa" }] : []),
+          ...(predictionHistory?.length ? [{ label: "Previous Forecasts", active: showPredictionHistory, toggle: () => setShowPredictionHistory(!showPredictionHistory), color: "#38bdf8" }] : []),
+          ...(backtestPredictions?.length ? [{ label: "Strategy Backtest", active: showBacktest, toggle: () => setShowBacktest(!showBacktest), color: "#a78bfa" }] : []),
         ].map((t) => (
           <button
             key={t.label}
@@ -179,6 +254,12 @@ export default function PriceChart({
           </span>
           <span className="text-zinc-600">|</span>
           <span className="text-zinc-500">Shaded area = 95% confidence interval</span>
+        </div>
+      )}
+      {performanceSummary && (
+        <div className="flex items-center gap-2 mb-2 text-xs text-zinc-400">
+          <span className="w-2.5 h-2.5 rounded-full bg-sky-400" />
+          <span>Previous forecasts: {performanceSummary}</span>
         </div>
       )}
       <ResponsiveContainer width="100%" height={400}>
@@ -217,9 +298,10 @@ export default function PriceChart({
               fontSize: 13,
             }}
             labelStyle={{ color: "#aaa" }}
-            formatter={(val) => [
-              `$${Number(val).toFixed(4)}`,
-            ]}
+            formatter={(val) => {
+              const n = Number(val);
+              return Number.isFinite(n) ? `$${n.toFixed(4)}` : "n/a";
+            }}
           />
           <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
           <ReferenceLine
@@ -272,12 +354,26 @@ export default function PriceChart({
             />
           )}
 
-          {/* Backtest predictions (toggleable) */}
+          {/* Stored forecast history (toggleable) */}
+          {hasPredictionHistory && (
+            <Line
+              type="monotone"
+              dataKey="prediction_history"
+              name="Previous Forecasts"
+              stroke="#38bdf8"
+              strokeWidth={2}
+              strokeDasharray="4 2"
+              dot={{ r: 2.5, fill: "#38bdf8" }}
+              connectNulls={false}
+            />
+          )}
+
+          {/* Strategy backtest predictions (toggleable) */}
           {hasBacktest && (
             <Line
               type="monotone"
               dataKey="backtest_pred"
-              name="Model Backtest"
+              name="Strategy Backtest"
               stroke="#a78bfa"
               strokeWidth={1.5}
               strokeDasharray="3 2"

@@ -32,3 +32,4 @@ CREATE TABLE predictions (
 
 CREATE INDEX idx_predictions_target_date ON predictions (target_date);
 CREATE INDEX idx_predictions_resolved ON predictions (actual_price) WHERE actual_price IS NOT NULL;
+CREATE INDEX idx_predictions_unresolved_target_date ON predictions (target_date) WHERE actual_price IS NULL;

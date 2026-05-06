@@ -38,7 +38,15 @@ export default function Home() {
     setError,
   });
 
-  const { forecast, attribution, backtestPredictions, forecastLoading, fetchForecast } = useForecast();
+  const {
+    forecast,
+    attribution,
+    backtestPredictions,
+    predictionHistory,
+    predictionPerformance,
+    forecastLoading,
+    fetchForecast,
+  } = useForecast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [timeframe, setTimeframe] = useState<
     "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL"
@@ -233,6 +241,8 @@ export default function Home() {
                 benchmarks={priceData.benchmarks}
                 forecast={forecast}
                 backtestPredictions={backtestPredictions}
+                predictionHistory={predictionHistory}
+                predictionPerformance={predictionPerformance}
               />
 
               {/* How we calculated this — full methodology breakdown */}

@@ -1,9 +1,10 @@
 /**
- * /api/forecast-history — Returns resolved predictions (forecast vs actual).
+ * /api/forecast-history — Returns stored predictions and performance metrics.
  *
  * On each request:
  * 1. Lazy-resolve any predictions whose target_date has passed but actual_price is NULL
- * 2. Return all resolved predictions as BacktestPrediction[]
+ * 2. Return pending + resolved predictions for chart overlays
+ * 3. Return aggregate accuracy metrics for the resolved subset
  *
  * GET ?limit=100
  */
@@ -19,6 +20,95 @@ import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { getSupabase } from "@/lib/supabase";
 
 export const maxDuration = 30;
+
+type PredictionDirection = "up" | "down" | "flat";
+
+interface PredictionToResolve {
+  id: string;
+  target_date: string;
+  predicted_price: number | string;
+  direction: PredictionDirection;
+  current_price: number | string;
+}
+
+interface PredictionHistoryRow {
+  created_at: string;
+  current_date: string;
+  current_price: number | string;
+  horizon: string;
+  target_date: string;
+  predicted_price: number | string;
+  actual_price: number | string | null;
+  direction_correct: boolean | null;
+  error_pct: number | string | null;
+  model_id: string;
+  model_name: string | null;
+}
+
+interface PredictionPerformanceMetrics {
+  total: number;
+  resolved: number;
+  pending: number;
+  direction_accuracy: number | null;
+  mean_absolute_error_pct: number | null;
+  latest_absolute_error_pct: number | null;
+}
+
+const emptyMetrics: PredictionPerformanceMetrics = {
+  total: 0,
+  resolved: 0,
+  pending: 0,
+  direction_accuracy: null,
+  mean_absolute_error_pct: null,
+  latest_absolute_error_pct: null,
+};
+
+function toFiniteNumber(value: number | string | null): number | null {
+  if (value === null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function round(value: number, decimals: number): number {
+  const scale = 10 ** decimals;
+  return Math.round(value * scale) / scale;
+}
+
+function buildMetrics(rows: PredictionHistoryRow[]): PredictionPerformanceMetrics {
+  const resolved = rows.filter((row) => toFiniteNumber(row.actual_price) !== null);
+  const directionRows = resolved.filter((row) => row.direction_correct !== null);
+  const correct = directionRows.filter((row) => row.direction_correct).length;
+  const absoluteErrors = resolved
+    .map((row) => {
+      const error = toFiniteNumber(row.error_pct);
+      return error === null ? null : Math.abs(error);
+    })
+    .filter((error): error is number => error !== null);
+  const latestResolved = [...resolved].sort((a, b) =>
+    b.target_date.localeCompare(a.target_date)
+  )[0];
+  const latestError = latestResolved
+    ? toFiniteNumber(latestResolved.error_pct)
+    : null;
+
+  return {
+    total: rows.length,
+    resolved: resolved.length,
+    pending: rows.length - resolved.length,
+    direction_accuracy: directionRows.length
+      ? round(correct / directionRows.length, 4)
+      : null,
+    mean_absolute_error_pct: absoluteErrors.length
+      ? round(
+          absoluteErrors.reduce((sum, error) => sum + error, 0) /
+            absoluteErrors.length,
+          3
+        )
+      : null,
+    latest_absolute_error_pct:
+      latestError === null ? null : round(Math.abs(latestError), 3),
+  };
+}
 
 /* ------------------------------------------------------------------ */
 /*  Fetch actual cotton price for a given date from Yahoo Finance      */
@@ -46,7 +136,7 @@ async function fetchActualPrice(targetDate: string): Promise<number | null> {
     const closes: (number | null)[] =
       result.indicators?.quote?.[0]?.close ?? [];
 
-    // Find the closest trading day on or before target_date
+    // Find the closest trading day around target_date.
     let bestPrice: number | null = null;
     let bestDist = Infinity;
     const targetTs = target.getTime() / 1000;
@@ -80,7 +170,12 @@ export async function GET(req: Request) {
     const supabase = getSupabase();
     if (!supabase) {
       return applyRateLimitHeaders(
-        NextResponse.json({ predictions: [], message: "Supabase not configured" }),
+        NextResponse.json({
+          configured: false,
+          predictions: [],
+          metrics: emptyMetrics,
+          message: "Supabase not configured",
+        }),
         rateLimit.headers
       );
     }
@@ -97,21 +192,28 @@ export async function GET(req: Request) {
       .lte("target_date", today)
       .limit(20); // Batch limit to avoid long Yahoo Finance calls
 
-    if (unresolved && unresolved.length > 0) {
+    const rowsToResolve = (unresolved ?? []) as PredictionToResolve[];
+    if (rowsToResolve.length > 0) {
       // Fetch actual prices in parallel (max 20 concurrent)
       const updates = await Promise.all(
-        unresolved.map(async (row) => {
+        rowsToResolve.map(async (row) => {
           const actual = await fetchActualPrice(row.target_date);
           if (actual === null) return null;
 
+          const currentPrice = toFiniteNumber(row.current_price);
+          const predictedPrice = toFiniteNumber(row.predicted_price);
+          if (currentPrice === null || predictedPrice === null || currentPrice <= 0) {
+            return null;
+          }
+
           const directionCorrect =
-            (row.direction === "up" && actual > row.current_price) ||
-            (row.direction === "down" && actual < row.current_price) ||
+            (row.direction === "up" && actual > currentPrice) ||
+            (row.direction === "down" && actual < currentPrice) ||
             (row.direction === "flat" &&
-              Math.abs(actual - row.current_price) / row.current_price < 0.003);
+              Math.abs(actual - currentPrice) / currentPrice < 0.003);
 
           const errorPct =
-            ((row.predicted_price - actual) / actual) * 100;
+            ((predictedPrice - actual) / actual) * 100;
 
           return {
             id: row.id,
@@ -136,12 +238,13 @@ export async function GET(req: Request) {
       }
     }
 
-    // Step 2: Return all resolved predictions
-    const { data: resolved, error } = await supabase
+    // Step 2: Return latest stored predictions, including pending future targets.
+    const { data: history, error } = await supabase
       .from("predictions")
-      .select("target_date, predicted_price, actual_price, direction_correct")
-      .not("actual_price", "is", null)
-      .order("target_date", { ascending: true })
+      .select(
+        "created_at, current_date, current_price, horizon, target_date, predicted_price, actual_price, direction_correct, error_pct, model_id, model_name"
+      )
+      .order("target_date", { ascending: false })
       .limit(limit);
 
     if (error) {
@@ -151,16 +254,25 @@ export async function GET(req: Request) {
       );
     }
 
-    // Map to BacktestPrediction shape
-    const predictions = (resolved ?? []).map((row) => ({
+    const rows = ((history ?? []) as PredictionHistoryRow[]).reverse();
+    const metrics = buildMetrics(rows);
+    const predictions = rows.map((row) => ({
       date: row.target_date,
-      predicted_price: Number(row.predicted_price),
-      actual_price: Number(row.actual_price),
-      direction_correct: row.direction_correct ?? false,
+      target_date: row.target_date,
+      prediction_date: row.current_date,
+      created_at: row.created_at,
+      horizon: row.horizon,
+      current_price: toFiniteNumber(row.current_price),
+      predicted_price: toFiniteNumber(row.predicted_price) ?? 0,
+      actual_price: toFiniteNumber(row.actual_price),
+      direction_correct: row.direction_correct,
+      error_pct: toFiniteNumber(row.error_pct),
+      model_id: row.model_id,
+      model_name: row.model_name,
     }));
 
     return applyRateLimitHeaders(
-      NextResponse.json({ predictions }),
+      NextResponse.json({ configured: true, predictions, metrics }),
       rateLimit.headers
     );
   } catch (e) {

@@ -784,32 +784,31 @@ Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not
       hf_forecasts: [],
     };
 
-    // Fire-and-forget: persist prediction to Supabase for accuracy tracking
+    // Persist prediction history for accuracy tracking. This is non-fatal, but
+    // awaited so serverless execution does not drop the write after response.
     const supabase = getSupabase();
     if (supabase) {
       const forecast = response.forecasts[0];
       const targetDate = addBusinessDays(response.current_date, horizonDays);
-      Promise.resolve().then(async () => {
-        try {
-          await supabase.from("predictions").upsert(
-            {
-              current_date: response.current_date,
-              current_price: response.current_price,
-              horizon: forecast.horizon,
-              target_date: targetDate,
-              predicted_price: forecast.predicted_price,
-              lower_price: forecast.lower_price,
-              upper_price: forecast.upper_price,
-              direction: forecast.direction,
-              confidence: response.confidence,
-              model_id: response.model.id,
-              model_name: response.model.name,
-              reasoning: response.reasoning || null,
-            },
-            { onConflict: "current_date,horizon,model_id" }
-          );
-        } catch { /* Supabase write failure must never break predictions */ }
-      });
+      try {
+        await supabase.from("predictions").upsert(
+          {
+            current_date: response.current_date,
+            current_price: response.current_price,
+            horizon: forecast.horizon,
+            target_date: targetDate,
+            predicted_price: forecast.predicted_price,
+            lower_price: forecast.lower_price,
+            upper_price: forecast.upper_price,
+            direction: forecast.direction,
+            confidence: response.confidence,
+            model_id: response.model.id,
+            model_name: response.model.name,
+            reasoning: response.reasoning || null,
+          },
+          { onConflict: "current_date,horizon,model_id" }
+        );
+      } catch { /* Supabase write failure must never break predictions */ }
     }
 
     return applyRateLimitHeaders(NextResponse.json(response), rateLimit.headers);

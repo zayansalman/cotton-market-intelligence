@@ -1,7 +1,7 @@
 /**
  * Server-side Supabase client singleton.
  *
- * Uses service role key — never import this from client components.
+ * Uses server-side credentials — never import this from client components.
  * Returns null if env vars are missing (graceful degradation for local dev).
  */
 
@@ -12,8 +12,11 @@ let _client: SupabaseClient | null = null;
 export function getSupabase(): SupabaseClient | null {
   if (_client) return _client;
 
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return null;
 
   _client = createClient(url, key);

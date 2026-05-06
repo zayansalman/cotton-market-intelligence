@@ -311,11 +311,24 @@ HF_STRATEGY_MODEL=Qwen/Qwen2.5-7B-Instruct
 # Provider routing
 STRATEGY_MODEL_PROVIDER=auto    # auto | huggingface | heuristic
 
-# Optional macro data and forecast-history tracking
+# Optional macro data
 FRED_API_KEY=your_fred_key
+
+# Optional Supabase forecast-history tracking (server-side prediction writes)
+SUPABASE_URL=your_supabase_url
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+
+# Vercel Marketplace Supabase projects may also expose these names.
+# The app can read the URL from either key; anon-key writes require matching table policies.
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
+
+### Forecast History Backend
+
+The market prediction flow is still stateless by default. When Supabase is configured, `/api/prediction` stores each generated forecast in the `predictions` table, and `/api/forecast-history` resolves past target dates against actual Cotton #2 prices to compute direction accuracy and absolute error. Apply `supabase/migrations/001_create_predictions.sql` to the Supabase project connected to both Vercel environments.
+
+For Vercel, connect Supabase through the Marketplace or add the env vars above to the `develop` and `main` projects. The app degrades gracefully to an empty history overlay when Supabase is not configured.
 
 ### Provider Routing
 

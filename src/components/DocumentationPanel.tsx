@@ -149,7 +149,7 @@ Composite score: -RMSE + 0.5 * direction_accuracy. Must beat naive on at least o
 |--------|-----|
 | **Next.js 16** | Server components + API routes in one deploy. No CORS, shared types. |
 | **TypeScript** | Single-language stack including ML models. Deploy simplicity over Python ecosystem. |
-| **Serverless Core** | Market data is fetched on demand. localStorage handles client scenarios and alerts. Optional Supabase stores forecast history when configured. |
+| **Serverless Core** | Market data is fetched on demand. localStorage handles client scenarios and alerts. Optional Supabase stores forecast history and accuracy metrics when configured. |
 | **Zod** | Runtime + compile-time safety from one schema definition. |
 | **Recharts** | Declarative React charts. Good enough for area/bar/composed. |
 | **HF Inference** | Optional final analyst synthesis. Without HF, the app degrades to model-stack or heuristic forecasts. |

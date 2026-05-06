@@ -793,7 +793,7 @@ Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not
       try {
         await supabase.from("predictions").upsert(
           {
-            current_date: response.current_date,
+            prediction_date: response.current_date,
             current_price: response.current_price,
             horizon: forecast.horizon,
             target_date: targetDate,
@@ -806,7 +806,7 @@ Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not
             model_name: response.model.name,
             reasoning: response.reasoning || null,
           },
-          { onConflict: "current_date,horizon,model_id" }
+          { onConflict: "prediction_date,horizon,model_id" }
         );
       } catch { /* Supabase write failure must never break predictions */ }
     }

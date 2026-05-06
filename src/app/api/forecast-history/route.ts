@@ -33,7 +33,7 @@ interface PredictionToResolve {
 
 interface PredictionHistoryRow {
   created_at: string;
-  current_date: string;
+  prediction_date: string;
   current_price: number | string;
   horizon: string;
   target_date: string;
@@ -242,7 +242,7 @@ export async function GET(req: Request) {
     const { data: history, error } = await supabase
       .from("predictions")
       .select(
-        "created_at, current_date, current_price, horizon, target_date, predicted_price, actual_price, direction_correct, error_pct, model_id, model_name"
+        "created_at, prediction_date, current_price, horizon, target_date, predicted_price, actual_price, direction_correct, error_pct, model_id, model_name"
       )
       .order("target_date", { ascending: false })
       .limit(limit);
@@ -259,7 +259,7 @@ export async function GET(req: Request) {
     const predictions = rows.map((row) => ({
       date: row.target_date,
       target_date: row.target_date,
-      prediction_date: row.current_date,
+      prediction_date: row.prediction_date,
       created_at: row.created_at,
       horizon: row.horizon,
       current_price: toFiniteNumber(row.current_price),

@@ -4,7 +4,7 @@ CREATE TABLE predictions (
   created_at      timestamptz DEFAULT now() NOT NULL,
 
   -- When the prediction was made and what it saw
-  current_date    date NOT NULL,
+  prediction_date date NOT NULL,
   current_price   numeric(8,4) NOT NULL,
 
   -- What it predicted
@@ -26,8 +26,8 @@ CREATE TABLE predictions (
   direction_correct boolean,
   error_pct         numeric(6,3),
 
-  -- One prediction per (current_date, horizon, model_id)
-  UNIQUE (current_date, horizon, model_id)
+  -- One prediction per (prediction_date, horizon, model_id)
+  UNIQUE (prediction_date, horizon, model_id)
 );
 
 CREATE INDEX idx_predictions_target_date ON predictions (target_date);

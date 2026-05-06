@@ -155,6 +155,60 @@ function horizonDaysFor(horizon: Horizon): number {
   return horizon === "5d" ? 5 : horizon === "21d" ? 21 : 63;
 }
 
+function futureBusinessDates(startDate: string, count: number): string[] {
+  const dates: string[] = [];
+  const d = new Date(startDate + "T00:00:00Z");
+  while (dates.length < count) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const day = d.getUTCDay();
+    if (day !== 0 && day !== 6) dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+function buildForecastPoints({
+  startDate,
+  startPrice,
+  predictedPrice,
+  lowerPrice,
+  upperPrice,
+  horizon,
+  horizonDays,
+}: {
+  startDate: string;
+  startPrice: number;
+  predictedPrice: number;
+  lowerPrice: number;
+  upperPrice: number;
+  horizon: Horizon;
+  horizonDays: number;
+}) {
+  const dates = futureBusinessDates(startDate, horizonDays);
+  return [
+    {
+      date: startDate,
+      predicted_price: Math.round(startPrice * 10000) / 10000,
+      lower_price: Math.round(startPrice * 10000) / 10000,
+      upper_price: Math.round(startPrice * 10000) / 10000,
+      horizon,
+    },
+    ...dates.map((date, index) => {
+      const t = (index + 1) / dates.length;
+      const eased = 1 - Math.pow(1 - t, 1.5);
+      return {
+        date,
+        predicted_price:
+          Math.round((startPrice + (predictedPrice - startPrice) * eased) * 10000) / 10000,
+        lower_price:
+          Math.round((startPrice + (lowerPrice - startPrice) * eased) * 10000) / 10000,
+        upper_price:
+          Math.round((startPrice + (upperPrice - startPrice) * eased) * 10000) / 10000,
+        horizon,
+      };
+    }),
+  ];
+}
+
 function directionFromReturn(value: number): "up" | "down" | "flat" {
   if (value > 0.003) return "up";
   if (value < -0.003) return "down";
@@ -754,6 +808,15 @@ Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not
     }
 
     const horizonDays = horizonDaysFor(horizon);
+    const forecastPoints = buildForecastPoints({
+      startDate: bm.price_date,
+      startPrice: currentPrice,
+      predictedPrice,
+      lowerPrice,
+      upperPrice,
+      horizon,
+      horizonDays,
+    });
 
     const response = {
       version: 6,
@@ -800,6 +863,7 @@ Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not
             predicted_price: forecast.predicted_price,
             lower_price: forecast.lower_price,
             upper_price: forecast.upper_price,
+            forecast_points: forecastPoints,
             direction: forecast.direction,
             confidence: response.confidence,
             model_id: response.model.id,

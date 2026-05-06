@@ -23,6 +23,14 @@ export const maxDuration = 30;
 
 type PredictionDirection = "up" | "down" | "flat";
 
+interface StoredForecastPoint {
+  date: string;
+  predicted_price: number;
+  lower_price: number;
+  upper_price: number;
+  horizon: string;
+}
+
 interface PredictionToResolve {
   id: string;
   target_date: string;
@@ -38,6 +46,8 @@ interface PredictionHistoryRow {
   horizon: string;
   target_date: string;
   predicted_price: number | string;
+  forecast_points: unknown;
+  direction: PredictionDirection;
   actual_price: number | string | null;
   direction_correct: boolean | null;
   error_pct: number | string | null;
@@ -72,6 +82,22 @@ function toFiniteNumber(value: number | string | null): number | null {
 function round(value: number, decimals: number): number {
   const scale = 10 ** decimals;
   return Math.round(value * scale) / scale;
+}
+
+function isStoredForecastPoint(value: unknown): value is StoredForecastPoint {
+  if (!value || typeof value !== "object") return false;
+  const point = value as Partial<StoredForecastPoint>;
+  return (
+    typeof point.date === "string" &&
+    typeof point.horizon === "string" &&
+    typeof point.predicted_price === "number" &&
+    typeof point.lower_price === "number" &&
+    typeof point.upper_price === "number"
+  );
+}
+
+function normalizeForecastPoints(value: unknown): StoredForecastPoint[] {
+  return Array.isArray(value) ? value.filter(isStoredForecastPoint) : [];
 }
 
 function buildMetrics(rows: PredictionHistoryRow[]): PredictionPerformanceMetrics {
@@ -242,7 +268,7 @@ export async function GET(req: Request) {
     const { data: history, error } = await supabase
       .from("predictions")
       .select(
-        "created_at, prediction_date, current_price, horizon, target_date, predicted_price, actual_price, direction_correct, error_pct, model_id, model_name"
+        "created_at, prediction_date, current_price, horizon, target_date, predicted_price, forecast_points, direction, actual_price, direction_correct, error_pct, model_id, model_name"
       )
       .order("target_date", { ascending: false })
       .limit(limit);
@@ -270,9 +296,37 @@ export async function GET(req: Request) {
       model_id: row.model_id,
       model_name: row.model_name,
     }));
+    const previousForecasts = rows
+      .map((row) => {
+        const points = normalizeForecastPoints(row.forecast_points);
+        if (points.length < 2) return null;
+        const predictedPrice =
+          toFiniteNumber(row.predicted_price) ?? points.at(-1)?.predicted_price ?? 0;
+        return {
+          id: `${row.model_id}-${row.horizon}-${row.prediction_date}`,
+          label: `Saved ${row.prediction_date}`,
+          as_of_date: row.prediction_date,
+          target_date: row.target_date,
+          model_name: row.model_name ?? row.model_id,
+          direction: row.direction,
+          predicted_price: predictedPrice,
+          actual_price: toFiniteNumber(row.actual_price),
+          error_pct: toFiniteNumber(row.error_pct),
+          direction_correct: row.direction_correct,
+          reasoning: `${row.model_name ?? row.model_id} forecast generated on ${row.prediction_date}.`,
+          points,
+        };
+      })
+      .filter((forecast): forecast is NonNullable<typeof forecast> => forecast !== null)
+      .reverse();
 
     return applyRateLimitHeaders(
-      NextResponse.json({ configured: true, predictions, metrics }),
+      NextResponse.json({
+        configured: true,
+        predictions,
+        previousForecasts,
+        metrics,
+      }),
       rateLimit.headers
     );
   } catch (e) {

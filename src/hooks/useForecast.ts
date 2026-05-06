@@ -61,10 +61,7 @@ interface PredictionResponse {
 
 interface ForecastHistoryResponse {
   metrics?: PredictionPerformanceMetrics;
-}
-
-interface PreviousForecastResponse {
-  forecasts?: PreviousForecastOverlayData[];
+  previousForecasts?: PreviousForecastOverlayData[];
 }
 
 /** Forecast attribution — what drove the prediction and how much. */
@@ -126,22 +123,12 @@ export function useForecast() {
 
     const fhData: ForecastHistoryResponse = await fhRes.json();
     setPredictionPerformance(fhData.metrics ?? null);
-  }, []);
-
-  const loadPreviousForecasts = useCallback(async () => {
-    const prevRes = await fetch("/api/previous-forecast?months_ago=1&horizon=21d").catch(() => null);
-    if (!prevRes?.ok) {
-      setPreviousForecasts([]);
-      return;
-    }
-
-    const prevData: PreviousForecastResponse = await prevRes.json();
-    setPreviousForecasts(prevData.forecasts ?? []);
+    setPreviousForecasts(fhData.previousForecasts ?? []);
   }, []);
 
   useEffect(() => {
-    void Promise.all([loadPredictionHistory(), loadPreviousForecasts()]);
-  }, [loadPredictionHistory, loadPreviousForecasts]);
+    void loadPredictionHistory();
+  }, [loadPredictionHistory]);
 
   const fetchForecast = useCallback(async () => {
     setLoading(true);
@@ -271,10 +258,7 @@ export function useForecast() {
 
       // Refresh stored metrics + prior forecast path after the live forecast stores.
       try {
-        await Promise.all([
-          loadPredictionHistory().catch(() => undefined),
-          loadPreviousForecasts().catch(() => undefined),
-        ]);
+        await loadPredictionHistory();
       } catch { /* Previous-forecast overlays are non-fatal. */ }
     } catch (e) {
       console.error("Forecast fetch failed:", e);
@@ -283,7 +267,7 @@ export function useForecast() {
     } finally {
       setLoading(false);
     }
-  }, [loadPredictionHistory, loadPreviousForecasts]);
+  }, [loadPredictionHistory]);
 
   return {
     forecast,

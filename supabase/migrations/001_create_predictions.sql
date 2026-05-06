@@ -13,6 +13,7 @@ CREATE TABLE predictions (
   predicted_price numeric(8,4) NOT NULL,
   lower_price     numeric(8,4),
   upper_price     numeric(8,4),
+  forecast_points jsonb NOT NULL DEFAULT '[]'::jsonb,
   direction       text NOT NULL,
   confidence      smallint,
 

@@ -326,7 +326,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
 ### Forecast History Backend
 
-The market prediction flow is still stateless by default. When Supabase is configured, `/api/prediction` stores each generated forecast in the `predictions` table, and `/api/forecast-history` resolves past target dates against actual Cotton #2 prices to compute direction accuracy and absolute error. Apply `supabase/migrations/001_create_predictions.sql` to the Supabase project connected to both Vercel environments.
+The market prediction flow is still stateless by default. When Supabase is configured, `/api/prediction` stores each generated forecast, including the full chart path, in the `predictions` table, and `/api/forecast-history` resolves past target dates against actual Cotton #2 prices to compute direction accuracy and absolute error. Apply the files in `supabase/migrations/` to the Supabase project connected to both Vercel environments.
 
 For Vercel, connect Supabase through the Marketplace or add the env vars above to the `develop` and `main` projects. The app degrades gracefully to an empty history overlay when Supabase is not configured.
 

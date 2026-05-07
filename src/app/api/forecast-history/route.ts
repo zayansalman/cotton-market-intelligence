@@ -19,9 +19,11 @@ import { safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
 import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { getSupabase } from "@/lib/supabase";
 import {
+  buildHistoricalPreviousForecasts,
   normalizeForecastPoints,
   selectNonOverlappingPreviousForecasts,
 } from "@/lib/forecast-history";
+import type { PricePoint } from "@/lib/types";
 
 export const maxDuration = 30;
 
@@ -60,6 +62,10 @@ interface PredictionPerformanceMetrics {
   latest_absolute_error_pct: number | null;
 }
 
+interface PricesResponse {
+  prices: PricePoint[];
+}
+
 const emptyMetrics: PredictionPerformanceMetrics = {
   total: 0,
   resolved: 0,
@@ -68,6 +74,8 @@ const emptyMetrics: PredictionPerformanceMetrics = {
   mean_absolute_error_pct: null,
   latest_absolute_error_pct: null,
 };
+
+type SupabaseClientInstance = NonNullable<ReturnType<typeof getSupabase>>;
 
 function toFiniteNumber(value: number | string | null): number | null {
   if (value === null) return null;
@@ -114,6 +122,90 @@ function buildMetrics(rows: PredictionHistoryRow[]): PredictionPerformanceMetric
     latest_absolute_error_pct:
       latestError === null ? null : round(Math.abs(latestError), 3),
   };
+}
+
+async function fetchHistoryRows(
+  supabase: SupabaseClientInstance,
+  limit: number
+): Promise<{ rows: PredictionHistoryRow[]; error: unknown }> {
+  const { data, error } = await supabase
+    .from("predictions")
+    .select(
+      "created_at, prediction_date, current_price, horizon, target_date, predicted_price, forecast_points, direction, actual_price, direction_correct, error_pct, model_id, model_name"
+    )
+    .order("target_date", { ascending: false })
+    .limit(limit);
+
+  return {
+    rows: ((data ?? []) as PredictionHistoryRow[]).reverse(),
+    error,
+  };
+}
+
+async function fetchPricesForBackfill(req: Request): Promise<PricePoint[] | null> {
+  try {
+    const host = req.headers.get("host") ?? "localhost:3000";
+    const proto =
+      req.headers.get("x-forwarded-proto") ??
+      (host.startsWith("localhost") || host.startsWith("127.0.0.1")
+        ? "http"
+        : "https");
+    const res = await fetch(`${proto}://${host}/api/prices`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Accept: "application/json",
+        "Accept-Language": "en",
+      },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as PricesResponse;
+    return Array.isArray(data.prices) ? data.prices : null;
+  } catch {
+    return null;
+  }
+}
+
+function historyKey(row: Pick<PredictionHistoryRow, "prediction_date" | "horizon" | "model_id">): string {
+  return `${row.prediction_date}|${row.horizon}|${row.model_id}`;
+}
+
+async function backfillMissingPreviousForecasts({
+  req,
+  supabase,
+  rows,
+  currentMarketDate,
+}: {
+  req: Request;
+  supabase: SupabaseClientInstance;
+  rows: PredictionHistoryRow[];
+  currentMarketDate: string;
+}): Promise<boolean> {
+  const selected = selectNonOverlappingPreviousForecasts(rows, {
+    currentMarketDate,
+    maxCount: 2,
+  });
+  if (selected.length >= 2) return false;
+
+  const prices = await fetchPricesForBackfill(req);
+  if (!prices?.length) return false;
+
+  const existingByKey = new Map(rows.map((row) => [historyKey(row), row]));
+  const snapshots = buildHistoricalPreviousForecasts(prices, currentMarketDate, {
+    horizon: "21d",
+    count: 2,
+  });
+  const rowsToInsert = snapshots.filter((snapshot) => {
+    const existing = existingByKey.get(historyKey(snapshot));
+    return !existing || normalizeForecastPoints(existing.forecast_points).length < 2;
+  });
+
+  if (rowsToInsert.length === 0) return false;
+
+  const { error } = await supabase
+    .from("predictions")
+    .upsert(rowsToInsert, { onConflict: "prediction_date,horizon,model_id" });
+
+  return !error;
 }
 
 /* ------------------------------------------------------------------ */
@@ -245,23 +337,33 @@ export async function GET(req: Request) {
       }
     }
 
-    // Step 2: Return latest stored predictions, including pending future targets.
-    const { data: history, error } = await supabase
-      .from("predictions")
-      .select(
-        "created_at, prediction_date, current_price, horizon, target_date, predicted_price, forecast_points, direction, actual_price, direction_correct, error_pct, model_id, model_name"
-      )
-      .order("target_date", { ascending: false })
-      .limit(limit);
+    const currentMarketDate =
+      requestedCurrentDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedCurrentDate)
+        ? requestedCurrentDate
+        : today;
 
-    if (error) {
+    // Step 2: Return latest stored predictions, including pending future targets.
+    const historyResult = await fetchHistoryRows(supabase, limit);
+
+    if (historyResult.error) {
       return applyRateLimitHeaders(
         NextResponse.json({ error: "Failed to fetch predictions" }, { status: 500 }),
         rateLimit.headers
       );
     }
 
-    const rows = ((history ?? []) as PredictionHistoryRow[]).reverse();
+    let rows = historyResult.rows;
+    const didBackfill = await backfillMissingPreviousForecasts({
+      req,
+      supabase,
+      rows,
+      currentMarketDate,
+    });
+    if (didBackfill) {
+      const refreshed = await fetchHistoryRows(supabase, limit);
+      if (!refreshed.error) rows = refreshed.rows;
+    }
+
     const metrics = buildMetrics(rows);
     const predictions = rows.map((row) => ({
       date: row.target_date,
@@ -277,10 +379,6 @@ export async function GET(req: Request) {
       model_id: row.model_id,
       model_name: row.model_name,
     }));
-    const currentMarketDate =
-      requestedCurrentDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedCurrentDate)
-        ? requestedCurrentDate
-        : today;
     const previousForecasts = selectNonOverlappingPreviousForecasts(rows, {
       currentMarketDate,
       maxCount: 2,

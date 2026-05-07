@@ -14,6 +14,7 @@ interface UseStrategyDeps {
   priceData: PricesResponse | null;
   headlines: Headline[];
   landedCost: LandedCostResponse | null;
+  marketForecast?: unknown | null;
   purchaserInput: PurchaserInput;
   setError: (msg: string | null) => void;
 }
@@ -54,6 +55,7 @@ export function useStrategy({
   priceData,
   headlines,
   landedCost,
+  marketForecast: cachedMarketForecast,
   purchaserInput,
   setError,
 }: UseStrategyDeps) {
@@ -64,9 +66,11 @@ export function useStrategy({
     if (!priceData) return;
     setGenerating(true);
     try {
-      const marketForecast = await fetch("/api/prediction?horizon=21d")
-        .then((res) => (res.ok ? res.json() : null))
-        .catch(() => null);
+      const marketForecast =
+        cachedMarketForecast ??
+        (await fetch("/api/prediction?horizon=21d")
+          .then((res) => (res.ok ? res.json() : null))
+          .catch(() => null));
       const body = buildStrategyRequestBody({
         benchmarks: priceData.benchmarks,
         headlines,
@@ -97,7 +101,7 @@ export function useStrategy({
     } finally {
       setGenerating(false);
     }
-  }, [priceData, headlines, landedCost, purchaserInput, setError]);
+  }, [priceData, headlines, landedCost, cachedMarketForecast, purchaserInput, setError]);
 
   return { strategy, generating, generateStrategy };
 }

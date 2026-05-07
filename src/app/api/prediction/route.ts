@@ -127,6 +127,51 @@ interface DeterministicForecast {
   top_drivers: PredictionDriver[];
 }
 
+type SupabaseClientInstance = NonNullable<ReturnType<typeof getSupabase>>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isCachedPredictionPayload(
+  value: unknown,
+  currentDate: string,
+  horizon: Horizon
+): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  if (value.current_date !== currentDate) return false;
+  if (!Array.isArray(value.forecasts)) return false;
+  return value.forecasts.some((forecast) =>
+    isRecord(forecast) && forecast.horizon === horizon
+  );
+}
+
+async function readCachedPrediction(
+  supabase: SupabaseClientInstance,
+  currentDate: string,
+  horizon: Horizon
+): Promise<Record<string, unknown> | null> {
+  try {
+    const { data, error } = await supabase
+      .from("predictions")
+      .select("response_payload")
+      .eq("prediction_date", currentDate)
+      .eq("horizon", horizon)
+      .not("response_payload", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    const payload = (data as { response_payload?: unknown }).response_payload;
+    return isCachedPredictionPayload(payload, currentDate, horizon)
+      ? payload
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchQuickQuote(ticker: string, label: string): Promise<QuickQuote> {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=1mo&interval=1d`;
@@ -568,9 +613,32 @@ export async function GET(req: Request) {
     const baseUrl = `${proto}://${host}`;
     const hdrs = { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en" };
 
-    // Fetch EVERYTHING in parallel — cotton data, headlines, cross-market
-    const [pricesRes, headlinesRes, ...crossMarketQuotes] = await Promise.all([
-      fetch(`${baseUrl}/api/prices`, { headers: hdrs }).catch(() => null),
+    // Fetch cotton prices first so same-day forecasts can short-circuit from DB
+    // before any headline, cross-market, model, or LLM work runs.
+    const pricesRes = await fetch(`${baseUrl}/api/prices`, { headers: hdrs }).catch(() => null);
+
+    if (!pricesRes?.ok) {
+      return applyRateLimitHeaders(
+        NextResponse.json({ error: "Market data unavailable" }, { status: 502 }),
+        rateLimit.headers
+      );
+    }
+
+    const pricesData = await pricesRes.json();
+    const bm = pricesData.benchmarks;
+    const currentPrice = bm.current_price;
+    const supabase = getSupabase();
+    const cachedPrediction = supabase
+      ? await readCachedPrediction(supabase, bm.price_date, horizon)
+      : null;
+    if (cachedPrediction) {
+      const response = NextResponse.json(cachedPrediction);
+      response.headers.set("X-CMI-Cache", "HIT");
+      return applyRateLimitHeaders(response, rateLimit.headers);
+    }
+
+    // Cache miss: fetch the broader market picture in parallel.
+    const [headlinesRes, ...crossMarketQuotes] = await Promise.all([
       fetch(`${baseUrl}/api/headlines`, { headers: hdrs }).catch(() => null),
       // Cross-market quotes (5s timeout each, all parallel)
       fetchQuickQuote("DX-Y.NYB", "US Dollar Index (DXY)"),
@@ -589,17 +657,6 @@ export async function GET(req: Request) {
       fetchQuickQuote("INR=X", "INR/USD"),
       fetchQuickQuote("BDT=X", "BDT/USD"),
     ]);
-
-    if (!pricesRes?.ok) {
-      return applyRateLimitHeaders(
-        NextResponse.json({ error: "Market data unavailable" }, { status: 502 }),
-        rateLimit.headers
-      );
-    }
-
-    const pricesData = await pricesRes.json();
-    const bm = pricesData.benchmarks;
-    const currentPrice = bm.current_price;
     const headlines = headlinesRes?.ok ? await headlinesRes.json() : [];
     const sentiment = await analyzeHeadlineSentiment(headlines).catch(() => null);
 
@@ -849,7 +906,6 @@ Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not
 
     // Persist prediction history for accuracy tracking. This is non-fatal, but
     // awaited so serverless execution does not drop the write after response.
-    const supabase = getSupabase();
     if (supabase) {
       const forecast = response.forecasts[0];
       const targetDate = addBusinessDays(response.current_date, horizonDays);
@@ -869,6 +925,7 @@ Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not
             model_id: response.model.id,
             model_name: response.model.name,
             reasoning: response.reasoning || null,
+            response_payload: response,
           },
           { onConflict: "prediction_date,horizon,model_id" }
         );

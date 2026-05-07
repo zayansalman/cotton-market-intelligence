@@ -14,6 +14,7 @@ CREATE TABLE predictions (
   lower_price     numeric(8,4),
   upper_price     numeric(8,4),
   forecast_points jsonb NOT NULL DEFAULT '[]'::jsonb,
+  response_payload jsonb,
   direction       text NOT NULL,
   confidence      smallint,
 
@@ -34,3 +35,23 @@ CREATE TABLE predictions (
 CREATE INDEX idx_predictions_target_date ON predictions (target_date);
 CREATE INDEX idx_predictions_resolved ON predictions (actual_price) WHERE actual_price IS NOT NULL;
 CREATE INDEX idx_predictions_unresolved_target_date ON predictions (target_date) WHERE actual_price IS NULL;
+CREATE INDEX idx_predictions_response_cache ON predictions (prediction_date, horizon, created_at DESC) WHERE response_payload IS NOT NULL;
+
+CREATE TABLE strategies (
+  id              uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  created_at      timestamptz DEFAULT now() NOT NULL,
+  strategy_date   date NOT NULL,
+  cache_key       text NOT NULL UNIQUE,
+  request_payload jsonb NOT NULL,
+  response_payload jsonb NOT NULL,
+
+  provider        text,
+  source          text,
+  signal          text,
+  confidence      smallint,
+  prediction_date date,
+  horizon         text
+);
+
+CREATE INDEX idx_strategies_strategy_date ON strategies (strategy_date DESC);
+CREATE INDEX idx_strategies_created_at ON strategies (created_at DESC);

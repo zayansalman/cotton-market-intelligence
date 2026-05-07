@@ -37,7 +37,7 @@ interface ForecastEvidence {
   reasoning: string;
 }
 
-interface PredictionResponse {
+export interface PredictionResponse {
   current_price: number;
   current_date: string;
   forecasts: PredictionForecast[];
@@ -108,6 +108,7 @@ const MAX_21D_RETURN = 0.12; // ±12%
 
 export function useForecast(currentMarketDate?: string) {
   const [forecast, setForecast] = useState<ForecastOverlayData | undefined>();
+  const [marketForecast, setMarketForecast] = useState<PredictionResponse | null>(null);
   const [attribution, setAttribution] = useState<ForecastAttribution | null>(null);
   const [previousForecasts, setPreviousForecasts] = useState<PreviousForecastOverlayData[]>([]);
   const [predictionPerformance, setPredictionPerformance] =
@@ -139,6 +140,7 @@ export function useForecast(currentMarketDate?: string) {
       const res = await fetch("/api/prediction?horizon=21d");
       if (!res.ok) throw new Error("Prediction failed");
       const data: PredictionResponse = await res.json();
+      setMarketForecast(data);
 
       const horizonDays: Record<string, number> = { "5d": 5, "21d": 21, "63d": 63 };
       const points: ForecastPoint[] = [];
@@ -266,6 +268,7 @@ export function useForecast(currentMarketDate?: string) {
     } catch (e) {
       console.error("Forecast fetch failed:", e);
       setForecast(undefined);
+      setMarketForecast(null);
       setAttribution(null);
     } finally {
       setLoading(false);
@@ -274,6 +277,7 @@ export function useForecast(currentMarketDate?: string) {
 
   return {
     forecast,
+    marketForecast,
     attribution,
     previousForecasts,
     predictionPerformance,

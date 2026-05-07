@@ -30,22 +30,24 @@ export default function Home() {
     validate,
   } = usePurchaserInput();
 
-  const { strategy, generating, generateStrategy } = useStrategy({
-    priceData,
-    headlines,
-    landedCost: null,
-    purchaserInput: input,
-    setError,
-  });
-
   const {
     forecast,
+    marketForecast,
     attribution,
     previousForecasts,
     predictionPerformance,
     forecastLoading,
     fetchForecast,
   } = useForecast(bm?.price_date);
+
+  const { strategy, generating, generateStrategy } = useStrategy({
+    priceData,
+    headlines,
+    landedCost: null,
+    marketForecast,
+    purchaserInput: input,
+    setError,
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [timeframe, setTimeframe] = useState<
     "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL"

@@ -20,6 +20,8 @@ import type { UnifiedSignal } from "@/lib/engine/unified-signal";
 import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
 import { analyzeNewsForStrategy } from "@/lib/hf/news-analysis";
 import { heuristicStrategyV2 } from "@/lib/engine/heuristic-v2";
+import { getSupabase } from "@/lib/supabase";
+import { cacheKey } from "@/lib/cache-key";
 
 const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
 for spinning mills in South Asia (Bangladesh, India, Pakistan).
@@ -54,6 +56,7 @@ Return ONLY a JSON object with these fields:
 The monthly_plan pct values MUST sum to 100.`;
 
 type StrategyProvider = "huggingface" | "heuristic";
+type SupabaseClientInstance = NonNullable<ReturnType<typeof getSupabase>>;
 
 interface AnalystMarketForecast {
   current_price: number;
@@ -214,6 +217,103 @@ function resolveProvider(): StrategyProvider {
   return "heuristic";
 }
 
+function buildStrategyCacheInput({
+  provider,
+  benchmarks,
+  headlines,
+  landedCost,
+  marketForecast,
+  purchaserInput,
+}: {
+  provider: StrategyProvider;
+  benchmarks: Benchmarks;
+  headlines: Headline[];
+  landedCost?: LandedCostResponse | null;
+  marketForecast?: AnalystMarketForecast | null;
+  purchaserInput: PurchaserInput;
+}) {
+  return {
+    version: 1,
+    provider,
+    strategy_input_version: 2,
+    purchaser_input: purchaserInput,
+    benchmarks,
+    headlines,
+    landedCost: landedCost ?? null,
+    marketForecast: marketForecast ?? null,
+  };
+}
+
+function isStrategyPayload(value: unknown): value is Strategy {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Partial<Strategy>;
+  return (
+    typeof payload.signal === "string" &&
+    typeof payload.confidence === "number" &&
+    typeof payload.executive_summary === "string" &&
+    Array.isArray(payload.monthly_plan) &&
+    Array.isArray(payload.risk_factors) &&
+    Array.isArray(payload.next_actions)
+  );
+}
+
+async function readCachedStrategy(
+  supabase: SupabaseClientInstance,
+  key: string
+): Promise<Strategy | null> {
+  try {
+    const { data, error } = await supabase
+      .from("strategies")
+      .select("response_payload")
+      .eq("cache_key", key)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    const payload = (data as { response_payload?: unknown }).response_payload;
+    return isStrategyPayload(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeStrategyCache({
+  supabase,
+  key,
+  requestPayload,
+  responsePayload,
+  provider,
+  benchmarks,
+  marketForecast,
+}: {
+  supabase: SupabaseClientInstance | null;
+  key: string;
+  requestPayload: unknown;
+  responsePayload: Strategy;
+  provider: StrategyProvider;
+  benchmarks: Benchmarks;
+  marketForecast?: AnalystMarketForecast | null;
+}): Promise<void> {
+  if (!supabase) return;
+  try {
+    const primaryForecast = marketForecast?.forecasts?.[0] ?? null;
+    await supabase.from("strategies").upsert(
+      {
+        strategy_date: benchmarks.price_date,
+        cache_key: key,
+        request_payload: requestPayload,
+        response_payload: responsePayload,
+        provider: responsePayload.provider ?? provider,
+        source: responsePayload.source,
+        signal: responsePayload.signal,
+        confidence: responsePayload.confidence,
+        prediction_date: marketForecast?.current_date ?? benchmarks.price_date,
+        horizon: primaryForecast?.horizon ?? null,
+      },
+      { onConflict: "cache_key" }
+    );
+  } catch { /* Strategy cache writes are non-fatal. */ }
+}
+
 async function runHuggingFaceStrategy(userMsg: string): Promise<Strategy | null> {
   const { hfChatCompletion, parseJsonResponse } = await import("@/lib/hf/client");
 
@@ -267,6 +367,26 @@ export async function POST(req: Request) {
       landedCost,
       marketForecast,
     } = parsed.data;
+    const provider = resolveProvider();
+    const strategyCacheInput = buildStrategyCacheInput({
+      provider,
+      benchmarks,
+      headlines,
+      landedCost,
+      marketForecast,
+      purchaserInput,
+    });
+    const strategyCacheKey = cacheKey(strategyCacheInput);
+    const supabase = getSupabase();
+    const cachedStrategy = supabase
+      ? await readCachedStrategy(supabase, strategyCacheKey)
+      : null;
+    if (cachedStrategy) {
+      const response = NextResponse.json(cachedStrategy);
+      response.headers.set("X-CMI-Cache", "HIT");
+      return applyRateLimitHeaders(response, rateLimit.headers);
+    }
+
     const heuristicBaseResult = heuristicStrategyV2(
       purchaserInput,
       benchmarks,
@@ -280,7 +400,6 @@ export async function POST(req: Request) {
       landedCost,
       marketForecast
     );
-    const provider = resolveProvider();
 
     // --- Compute unified signal (non-blocking) ---
     let unifiedSignal: UnifiedSignal | null = null;
@@ -335,13 +454,12 @@ export async function POST(req: Request) {
         "Strategy AI quota exceeded — using deterministic strategy generation with the latest market forecast overlay.",
         ...result.risk_factors,
       ];
+      const responsePayload = attachUnifiedSignalFields(
+        attachConstraintFields(result, heuristicBaseResult),
+        unifiedSignal
+      );
       return applyRateLimitHeaders(
-        NextResponse.json(
-          attachUnifiedSignalFields(
-            attachConstraintFields(result, heuristicBaseResult),
-            unifiedSignal
-          )
-        ),
+        NextResponse.json(responsePayload),
         allHeaders
       );
     }
@@ -350,13 +468,21 @@ export async function POST(req: Request) {
       const strategy = await runHuggingFaceStrategy(userMsg);
       if (strategy) {
         recordAiUsage(req);
+        const responsePayload = attachUnifiedSignalFields(
+          attachConstraintFields(strategy, heuristicBaseResult),
+          unifiedSignal
+        );
+        await writeStrategyCache({
+          supabase,
+          key: strategyCacheKey,
+          requestPayload: strategyCacheInput,
+          responsePayload,
+          provider,
+          benchmarks,
+          marketForecast,
+        });
         return applyRateLimitHeaders(
-          NextResponse.json(
-            attachUnifiedSignalFields(
-              attachConstraintFields(strategy, heuristicBaseResult),
-              unifiedSignal
-            )
-          ),
+          NextResponse.json(responsePayload),
           allHeaders
         );
       }
@@ -370,13 +496,23 @@ export async function POST(req: Request) {
       (heuristicResult as unknown as Record<string, unknown>).predicted_return = unifiedSignal.predicted_return;
       (heuristicResult as unknown as Record<string, unknown>).news_override = unifiedSignal.news_override;
     }
+    const responsePayload = attachUnifiedSignalFields(
+      attachConstraintFields(heuristicResult, heuristicBaseResult),
+      unifiedSignal
+    );
+    if (provider === "heuristic") {
+      await writeStrategyCache({
+        supabase,
+        key: strategyCacheKey,
+        requestPayload: strategyCacheInput,
+        responsePayload,
+        provider,
+        benchmarks,
+        marketForecast,
+      });
+    }
     return applyRateLimitHeaders(
-      NextResponse.json(
-        attachUnifiedSignalFields(
-          attachConstraintFields(heuristicResult, heuristicBaseResult),
-          unifiedSignal
-        )
-      ),
+      NextResponse.json(responsePayload),
       allHeaders
     );
   } catch (e) {

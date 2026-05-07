@@ -45,7 +45,7 @@ export default function Home() {
     predictionPerformance,
     forecastLoading,
     fetchForecast,
-  } = useForecast();
+  } = useForecast(bm?.price_date);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [timeframe, setTimeframe] = useState<
     "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL"

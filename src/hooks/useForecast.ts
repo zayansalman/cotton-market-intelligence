@@ -106,7 +106,7 @@ function futureDates(startDate: string, count: number): string[] {
  */
 const MAX_21D_RETURN = 0.12; // ±12%
 
-export function useForecast() {
+export function useForecast(currentMarketDate?: string) {
   const [forecast, setForecast] = useState<ForecastOverlayData | undefined>();
   const [attribution, setAttribution] = useState<ForecastAttribution | null>(null);
   const [previousForecasts, setPreviousForecasts] = useState<PreviousForecastOverlayData[]>([]);
@@ -115,7 +115,10 @@ export function useForecast() {
   const [loading, setLoading] = useState(false);
 
   const loadPredictionHistory = useCallback(async () => {
-    const fhRes = await fetch("/api/forecast-history").catch(() => null);
+    const params = new URLSearchParams();
+    if (currentMarketDate) params.set("current_date", currentMarketDate);
+    const query = params.toString();
+    const fhRes = await fetch(`/api/forecast-history${query ? `?${query}` : ""}`).catch(() => null);
     if (!fhRes?.ok) {
       setPredictionPerformance(null);
       return;
@@ -124,7 +127,7 @@ export function useForecast() {
     const fhData: ForecastHistoryResponse = await fhRes.json();
     setPredictionPerformance(fhData.metrics ?? null);
     setPreviousForecasts(fhData.previousForecasts ?? []);
-  }, []);
+  }, [currentMarketDate]);
 
   useEffect(() => {
     void loadPredictionHistory();

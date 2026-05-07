@@ -165,7 +165,7 @@ export default function PriceChart({
 
   const hasForecast = forecast && forecast.points.length > 0 && showForecast;
   const visiblePreviousForecasts = showPreviousForecasts
-    ? previousForecasts?.slice(0, 3) ?? []
+    ? previousForecasts?.slice(0, 2) ?? []
     : [];
   const data = mergeData(
     prices,
@@ -206,7 +206,7 @@ export default function PriceChart({
           : null,
       ].filter(Boolean).join(" | ")
     : null;
-  const previousColors = ["#38bdf8", "#2dd4bf", "#fbbf24"];
+  const previousColors = ["#38bdf8", "#2dd4bf"];
 
   return (
     <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">

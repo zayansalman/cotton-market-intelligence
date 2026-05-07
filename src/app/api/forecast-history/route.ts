@@ -6,7 +6,7 @@
  * 2. Return pending + resolved predictions for chart overlays
  * 3. Return aggregate accuracy metrics for the resolved subset
  *
- * GET ?limit=100
+ * GET ?limit=100&current_date=YYYY-MM-DD
  */
 
 import { NextResponse } from "next/server";
@@ -18,18 +18,14 @@ import {
 import { safeErrorResponse, fetchWithTimeout } from "@/lib/api-security";
 import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { getSupabase } from "@/lib/supabase";
+import {
+  normalizeForecastPoints,
+  selectNonOverlappingPreviousForecasts,
+} from "@/lib/forecast-history";
 
 export const maxDuration = 30;
 
 type PredictionDirection = "up" | "down" | "flat";
-
-interface StoredForecastPoint {
-  date: string;
-  predicted_price: number;
-  lower_price: number;
-  upper_price: number;
-  horizon: string;
-}
 
 interface PredictionToResolve {
   id: string;
@@ -82,22 +78,6 @@ function toFiniteNumber(value: number | string | null): number | null {
 function round(value: number, decimals: number): number {
   const scale = 10 ** decimals;
   return Math.round(value * scale) / scale;
-}
-
-function isStoredForecastPoint(value: unknown): value is StoredForecastPoint {
-  if (!value || typeof value !== "object") return false;
-  const point = value as Partial<StoredForecastPoint>;
-  return (
-    typeof point.date === "string" &&
-    typeof point.horizon === "string" &&
-    typeof point.predicted_price === "number" &&
-    typeof point.lower_price === "number" &&
-    typeof point.upper_price === "number"
-  );
-}
-
-function normalizeForecastPoints(value: unknown): StoredForecastPoint[] {
-  return Array.isArray(value) ? value.filter(isStoredForecastPoint) : [];
 }
 
 function buildMetrics(rows: PredictionHistoryRow[]): PredictionPerformanceMetrics {
@@ -208,6 +188,7 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const limit = Math.min(Math.max(Number(searchParams.get("limit")) || 100, 1), 500);
+    const requestedCurrentDate = searchParams.get("current_date");
 
     // Step 1: Lazy-resolve unresolved predictions whose target_date has passed
     const today = new Date().toISOString().slice(0, 10);
@@ -296,10 +277,16 @@ export async function GET(req: Request) {
       model_id: row.model_id,
       model_name: row.model_name,
     }));
-    const previousForecasts = rows
+    const currentMarketDate =
+      requestedCurrentDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedCurrentDate)
+        ? requestedCurrentDate
+        : today;
+    const previousForecasts = selectNonOverlappingPreviousForecasts(rows, {
+      currentMarketDate,
+      maxCount: 2,
+    })
       .map((row) => {
         const points = normalizeForecastPoints(row.forecast_points);
-        if (points.length < 2) return null;
         const predictedPrice =
           toFiniteNumber(row.predicted_price) ?? points.at(-1)?.predicted_price ?? 0;
         return {
@@ -316,9 +303,7 @@ export async function GET(req: Request) {
           reasoning: `${row.model_name ?? row.model_id} forecast generated on ${row.prediction_date}.`,
           points,
         };
-      })
-      .filter((forecast): forecast is NonNullable<typeof forecast> => forecast !== null)
-      .reverse();
+      });
 
     return applyRateLimitHeaders(
       NextResponse.json({

@@ -8,7 +8,7 @@
  * plus an aggregate market sentiment score.
  */
 
-import { fetchWithTimeout } from "@/lib/api-security";
+import { fetchWithTimeout } from "../fetch-with-timeout";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */

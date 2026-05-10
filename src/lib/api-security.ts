@@ -4,6 +4,7 @@
  */
 
 import { NextResponse } from "next/server";
+export { fetchWithTimeout } from "./fetch-with-timeout";
 
 /* ------------------------------------------------------------------ */
 /*  Payload size guard                                                 */
@@ -79,23 +80,4 @@ export function safeErrorResponse(
     { error: SAFE_MESSAGES[endpoint] ?? "Internal server error" },
     { status: 500 }
   );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Fetch with timeout                                                 */
-/* ------------------------------------------------------------------ */
-
-/**
- * Wrapper around fetch with an explicit timeout.
- * Default: 15 seconds for external API calls.
- */
-export function fetchWithTimeout(
-  url: string,
-  init: RequestInit & { timeout?: number } = {}
-): Promise<Response> {
-  const { timeout = 15_000, ...fetchInit } = init;
-  return fetch(url, {
-    ...fetchInit,
-    signal: AbortSignal.timeout(timeout),
-  });
 }

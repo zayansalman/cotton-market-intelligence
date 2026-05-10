@@ -28,7 +28,7 @@
  * Inference cost per strategy call: ~$0.001 on HF Pro.
  */
 
-import { fetchWithTimeout } from "@/lib/api-security";
+import { fetchWithTimeout } from "../fetch-with-timeout";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */

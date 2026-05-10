@@ -12,7 +12,7 @@
  *    probabilistic point forecasts (when available via Inference API)
  */
 
-import { fetchWithTimeout } from "@/lib/api-security";
+import { fetchWithTimeout } from "../fetch-with-timeout";
 import type { Benchmarks } from "@/lib/types";
 import type { MarketSentiment } from "./sentiment";
 import { hfChatCompletion, parseJsonResponse } from "./client";

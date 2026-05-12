@@ -18,7 +18,6 @@ import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { computeUnifiedSignal } from "@/lib/engine/unified-signal";
 import type { UnifiedSignal } from "@/lib/engine/unified-signal";
 import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
-import { analyzeNewsForStrategy } from "@/lib/hf/news-analysis";
 import { heuristicStrategyV2 } from "@/lib/engine/heuristic-v2";
 import { getSupabase } from "@/lib/supabase";
 import { cacheKey } from "@/lib/cache-key";
@@ -79,6 +78,7 @@ interface AnalystMarketForecast {
   key_factors?: Array<{ factor: string; impact: string; magnitude: string }>;
   forecast_evidence?: unknown[];
   evidence_assessment?: unknown[];
+  sentiment?: { aggregate_score?: number } | null;
 }
 
 function mapSignalToReturn(signal: Strategy["signal"]): number {
@@ -120,6 +120,13 @@ function attachUnifiedSignalFields(
 function confidence01(confidence: number | undefined): number | null {
   if (confidence == null || !Number.isFinite(confidence)) return null;
   return confidence > 1 ? confidence / 100 : confidence;
+}
+
+function sentimentScoreFromForecast(
+  marketForecast: AnalystMarketForecast | null
+): number | null {
+  const score = marketForecast?.sentiment?.aggregate_score;
+  return typeof score === "number" && Number.isFinite(score) ? score : null;
 }
 
 function buildUserMessage(
@@ -413,16 +420,22 @@ export async function POST(req: Request) {
       const marketForecastConfidence = confidence01(marketForecast?.confidence);
       const modelKind = marketForecast?.model?.kind;
 
-      // Run sentiment analysis and deep news analysis in parallel
-      const [sentimentResult, newsAnalysisResult] = await Promise.allSettled([
-        analyzeHeadlineSentiment(
-          headlines.map(h => ({ title: h.title, summary: h.summary ?? "" }))
-        ),
-        analyzeNewsForStrategy(headlines, benchmarks,  null),
-      ]);
+      // `/api/prediction` already performs the expensive sentiment/news/LLM
+      // synthesis. Reusing that evidence keeps strategy generation fast and
+      // prevents roadmap calls from timing out on duplicate HF analysis.
+      const forecastSentimentScore = sentimentScoreFromForecast(marketForecast);
+      const shouldRunFallbackHeadlineAnalysis = !marketForecast;
+      const [sentimentResult] = shouldRunFallbackHeadlineAnalysis
+        ? await Promise.allSettled([
+            analyzeHeadlineSentiment(
+              headlines.slice(0, 10).map(h => ({ title: h.title, summary: h.summary ?? "" }))
+            ),
+          ])
+        : [];
 
-      const sentiment = sentimentResult.status === "fulfilled" ? sentimentResult.value : null;
-      const newsAnalysis = newsAnalysisResult.status === "fulfilled" ? newsAnalysisResult.value : null;
+      const sentiment =
+        sentimentResult?.status === "fulfilled" ? sentimentResult.value : null;
+      const newsAnalysis = null;
 
       unifiedSignal = computeUnifiedSignal({
         model_return: modelKind === "model_stack" ? primaryReturn : null,
@@ -438,7 +451,7 @@ export async function POST(req: Request) {
         llm_reasoning: marketForecast?.reasoning ?? null,
         heuristic_return: heuristicReturn,
         heuristic_signal: heuristicBaseResult.signal,
-        sentiment_score: sentiment?.aggregate_score ?? null,
+        sentiment_score: forecastSentimentScore ?? sentiment?.aggregate_score ?? null,
         news_analysis: newsAnalysis,
       });
     } catch { /* non-fatal */ }

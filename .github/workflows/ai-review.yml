@@ -19,6 +19,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate required AI secrets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN GitHub Actions secret is required for AI PR Review. Add it under Repository settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
       - name: Build PR diff snapshot
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
@@ -57,9 +66,7 @@ jobs:
               raise SystemExit(0)
 
           if not os.getenv("HF_TOKEN"):
-              set_review_status("skipped")
-              out.write_text("", encoding="utf-8")
-              raise SystemExit(0)
+              raise SystemExit("HF_TOKEN GitHub Actions secret is required for AI PR Review.")
 
           prompt = (
               "You are an expert code reviewer. Review this PR diff with focus on:\n"

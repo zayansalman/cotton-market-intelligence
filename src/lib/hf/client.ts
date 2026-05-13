@@ -43,9 +43,16 @@ export interface ChatCompletionOptions {
 /* ------------------------------------------------------------------ */
 
 export const DEFAULT_HF_CHAT_MODEL = "Qwen/Qwen2.5-72B-Instruct:fastest";
+const DEFAULT_HF_FALLBACK_MODELS = ["Qwen/Qwen2.5-Coder-32B-Instruct:fastest"];
 const DEFAULT_HF_CHAT_ENDPOINT = "https://router.huggingface.co/v1/chat/completions";
 const MAX_ROUTER_ATTEMPTS = 2;
 const HF_MODEL_ID_PATTERN = /^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/;
+
+function configuredFallbackModels(): string[] {
+  const raw = process.env.HF_STRATEGY_FALLBACK_MODELS;
+  if (!raw) return DEFAULT_HF_FALLBACK_MODELS;
+  return raw.split(",").map((model) => model.trim()).filter(Boolean);
+}
 
 /**
  * Current model info for transparency in UI.
@@ -78,13 +85,13 @@ export async function hfChatCompletion(
     return null;
   }
 
-  const model = (options.model ?? process.env.HF_STRATEGY_MODEL ?? DEFAULT_HF_CHAT_MODEL).trim();
+  const primaryModel = (options.model ?? process.env.HF_STRATEGY_MODEL ?? DEFAULT_HF_CHAT_MODEL).trim();
   const endpoint = (process.env.HF_CHAT_ENDPOINT ?? DEFAULT_HF_CHAT_ENDPOINT).trim();
-  if (!model) {
+  if (!primaryModel) {
     console.warn("[hf-client] HF chat model is empty");
     return null;
   }
-  if (!HF_MODEL_ID_PATTERN.test(model)) {
+  if (!HF_MODEL_ID_PATTERN.test(primaryModel)) {
     console.warn("[hf-client] HF chat model contains invalid characters");
     return null;
   }
@@ -103,45 +110,56 @@ export async function hfChatCompletion(
     return null;
   }
 
-  for (let attempt = 1; attempt <= MAX_ROUTER_ATTEMPTS; attempt += 1) {
-    try {
-      const res = await fetchWithTimeout(endpoint, {
-        method: "POST",
-        timeout: 45_000,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          messages: options.messages,
-          max_tokens: options.max_tokens ?? 800,
-          temperature: options.temperature ?? 0.2,
-          ...(options.response_format ? { response_format: options.response_format } : {}),
-        }),
-      });
+  const models = [primaryModel, ...configuredFallbackModels()]
+    .filter((model, index, all) => model && all.indexOf(model) === index);
 
-      if (res.ok) {
-        const data = await res.json();
-        const content = data?.choices?.[0]?.message?.content?.trim();
-        if (content) {
-          console.info(`[hf-client] ${model} succeeded via HF Router`);
-          return content;
+  for (const model of models) {
+    if (!HF_MODEL_ID_PATTERN.test(model)) {
+      console.warn(`[hf-client] Skipping invalid HF chat model: ${model}`);
+      continue;
+    }
+
+    for (let attempt = 1; attempt <= MAX_ROUTER_ATTEMPTS; attempt += 1) {
+      try {
+        const res = await fetchWithTimeout(endpoint, {
+          method: "POST",
+          timeout: 45_000,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model,
+            messages: options.messages,
+            max_tokens: options.max_tokens ?? 800,
+            temperature: options.temperature ?? 0.2,
+            ...(options.response_format ? { response_format: options.response_format } : {}),
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const content = data?.choices?.[0]?.message?.content?.trim();
+          if (content) {
+            console.info(`[hf-client] ${model} succeeded via HF Router`);
+            return content;
+          }
+          console.warn(`[hf-client] ${model} returned empty content`);
+          break;
         }
-        console.warn(`[hf-client] ${model} returned empty content`);
-        return null;
-      }
 
-      const status = res.status;
-      const errBody = await res.text().catch(() => "");
-      console.warn(`[hf-client] ${model} HTTP ${status}: ${errBody.slice(0, 250)}`);
-      if (status !== 429 && status < 500) break;
-    } catch (e) {
-      console.warn(`[hf-client] ${model} attempt ${attempt} failed:`, e);
+        const status = res.status;
+        const errBody = await res.text().catch(() => "");
+        console.warn(`[hf-client] ${model} HTTP ${status}: ${errBody.slice(0, 250)}`);
+        if (status === 401 || status === 403) return null;
+        if (status !== 429 && status < 500) break;
+      } catch (e) {
+        console.warn(`[hf-client] ${model} attempt ${attempt} failed:`, e);
+      }
     }
   }
 
-  console.error(`[hf-client] HF Router failed for ${model}`);
+  console.error(`[hf-client] HF Router failed for configured models`);
   return null;
 }
 

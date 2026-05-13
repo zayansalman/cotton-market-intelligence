@@ -4,6 +4,7 @@ import { DEFAULT_HF_CHAT_MODEL, hfChatCompletion } from "./client";
 const ORIGINAL_ENV = {
   HF_TOKEN: process.env.HF_TOKEN,
   HF_STRATEGY_MODEL: process.env.HF_STRATEGY_MODEL,
+  HF_STRATEGY_FALLBACK_MODELS: process.env.HF_STRATEGY_FALLBACK_MODELS,
   HF_CHAT_ENDPOINT: process.env.HF_CHAT_ENDPOINT,
 };
 
@@ -28,6 +29,7 @@ describe("hfChatCompletion", () => {
   beforeEach(() => {
     process.env.HF_TOKEN = "hf_test_token";
     delete process.env.HF_STRATEGY_MODEL;
+    delete process.env.HF_STRATEGY_FALLBACK_MODELS;
     delete process.env.HF_CHAT_ENDPOINT;
   });
 
@@ -75,7 +77,28 @@ describe("hfChatCompletion", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("does not retry non-transient request errors", async () => {
+  it("falls back to a smaller LLM if the primary model is unavailable", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "unsupported model" }, 400))
+      .mockResolvedValueOnce(jsonResponse({ choices: [{ message: { content: "fallback view" } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      hfChatCompletion({
+        messages: [{ role: "user", content: "Fallback request" }],
+      })
+    ).resolves.toBe("fallback view");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).model).toBe(DEFAULT_HF_CHAT_MODEL);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).model).toBe(
+      "Qwen/Qwen2.5-Coder-32B-Instruct:fastest"
+    );
+  });
+
+  it("does not retry the same model on non-transient request errors", async () => {
+    process.env.HF_STRATEGY_FALLBACK_MODELS = "bad fallback model";
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ error: "bad model" }, 400));
     vi.stubGlobal("fetch", fetchMock);
 

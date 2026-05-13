@@ -15,7 +15,7 @@
 import { fetchWithTimeout } from "../fetch-with-timeout";
 import type { Benchmarks } from "@/lib/types";
 import type { MarketSentiment } from "./sentiment";
-import { hfChatCompletion, parseJsonResponse } from "./client";
+import { DEFAULT_HF_CHAT_MODEL, hfChatCompletion, parseJsonResponse } from "./client";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -57,7 +57,7 @@ export async function llmForecast(
 ): Promise<HFForecast | null> {
   if (!process.env.HF_TOKEN) return null;
 
-  const model = process.env.HF_STRATEGY_MODEL ?? "Qwen/Qwen2.5-7B-Instruct";
+  const model = process.env.HF_STRATEGY_MODEL ?? DEFAULT_HF_CHAT_MODEL;
 
   const userMsg = `COTTON #2 FUTURES DATA:
 Price: $${benchmarks.current_price.toFixed(4)}/lb (${benchmarks.price_date})

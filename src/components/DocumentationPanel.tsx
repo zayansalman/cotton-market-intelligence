@@ -22,7 +22,7 @@ The forecast route runs an 8-model TypeScript stack over 48 engineered features.
 Price percentile rank + z-score + volatility regime -> candidate forecast. Simple, robust, deterministic. The honest baseline that any advanced model must beat.
 
 **3. HF Analyst Synthesis**
-Qwen 2.5 7B Instruct ingests the model-stack forecast, heuristic forecast, sentiment, headlines, and cross-market context. It makes the final analyst judgment instead of blindly averaging signals.
+Qwen 2.5 72B Instruct ingests the model-stack forecast, heuristic forecast, sentiment, headlines, and cross-market context. It makes the final analyst judgment instead of blindly averaging signals.
 
 **4. Sentiment Analysis**
 DistilRoBERTa financial sentiment on RSS headlines. Aggregate bullish/bearish/neutral score. Useful at the margin, but never presented as validated statistical accuracy.
@@ -122,7 +122,7 @@ Reserved feature column plus live evidence for the LLM analyst from financial ne
 - **Gradient Boosted Trees (depth 3)**: Deeper trees capture higher-order conditional interactions (e.g., high vol AND low momentum AND harvest season). Complementary signal to stumps.
 
 ### HF AI Context
-- **Qwen 2.5 7B Instruct**: Final analyst synthesis over candidate forecasts, news reasoning, and cross-market context
+- **Qwen 2.5 72B Instruct**: Final analyst synthesis over candidate forecasts, news reasoning, and cross-market context
 - **DistilRoBERTa**: Financial sentiment classification on headlines
 
 ### Champion Selection

@@ -11,14 +11,14 @@ export default function ModelInfo({
 }) {
   const modelName =
     provider === "huggingface"
-      ? "Qwen 2.5 7B Instruct (via HF Pro)"
+      ? "Qwen 2.5 72B Instruct (via HF Router)"
       : provider === "heuristic"
         ? "Statistical Heuristic + Ensemble"
         : provider ?? "Unknown";
 
   const description =
     provider === "huggingface"
-      ? "AI-powered analysis using Qwen 2.5 7B — instruction-tuned open model with strong structured JSON output. Selected for optimal balance of reasoning capability and latency."
+      ? "AI-powered analysis using Qwen 2.5 72B — instruction-tuned open model with strong structured JSON output, routed through Hugging Face for current provider availability."
       : "Deterministic statistical model using percentile rank, z-score, and volatility regime. Enhanced with HF sentiment analysis and LLM news reasoning when available.";
 
   return (

@@ -359,7 +359,7 @@ export default function Home() {
               This tool provides model-generated cotton market forecasts and procurement timing support. When Hugging Face is configured, Qwen acts as the final analyst layer by ingesting the local model stack, heuristic forecast, sentiment, news, and cross-market evidence before issuing the final view. If hosted AI is unavailable, the app falls back to transparent model/heuristic outputs. It is not investment advice. All recommendations should be validated by qualified professionals before execution. Models can be wrong — past performance does not guarantee future results.
             </p>
             <p className="text-[10px] text-zinc-700">
-              Data: Yahoo Finance (delayed), optional FRED | News: RSS (CottonGrower, TextileWorld, USDA, Reuters, ICAC, Fibre2Fashion) | Sentiment: HF DistilRoBERTa | Optional AI context: HF Qwen 2.5 7B | EU AI Act: limited-risk system, transparency obligations met
+              Data: Yahoo Finance (delayed), optional FRED | News: RSS (CottonGrower, TextileWorld, USDA, Reuters, ICAC, Fibre2Fashion) | Sentiment: HF DistilRoBERTa | Optional AI context: HF Qwen 2.5 72B | EU AI Act: limited-risk system, transparency obligations met
             </p>
           </div>
         </main>

@@ -159,11 +159,11 @@ export function useForecast(currentMarketDate?: string) {
       const localDir = localReturn > 0.003 ? "up" : localReturn < -0.003 ? "down" : "flat";
       const primarySourceName =
         data.model.kind === "llm_synthesis"
-          ? "LLM Analyst Synthesis (Qwen 2.5 7B)"
+          ? "LLM Analyst Synthesis (Qwen 2.5 72B)"
           : data.model.kind === "model_stack"
           ? `Quant Model (${data.model.name})`
           : data.model.kind === "llm_fallback"
-            ? "LLM Analyst (Qwen 2.5 7B)"
+            ? "LLM Analyst (Qwen 2.5 72B)"
             : "Heuristic fallback";
       const primaryAccuracy =
         data.model.direction_accuracy != null
@@ -199,7 +199,7 @@ export function useForecast(currentMarketDate?: string) {
             // Cap HF returns to realistic bounds
             const cappedReturn = Math.max(-MAX_21D_RETURN, Math.min(MAX_21D_RETURN, hfReturn));
             sources.push({
-              name: hf.provider === "hf_llm" ? "LLM Analyst (Qwen 2.5 7B)" : `AI Model (${hf.model_used})`,
+              name: hf.provider === "hf_llm" ? "LLM Analyst (Qwen 2.5 72B)" : `AI Model (${hf.model_used})`,
               weight: hf.provider === "hf_llm" ? "analyst evidence" : "model evidence",
               direction: (hf.direction as "up" | "down" | "flat") ?? "flat",
               detail: hf.reasoning?.slice(0, 100) ?? `${(cappedReturn * 100).toFixed(2)}% return, ${(hf.confidence * 100).toFixed(0)}% confidence`,

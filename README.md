@@ -307,6 +307,7 @@ Create `.env.local` for optional AI and forecast-history features:
 # AI strategy generation and analyst context (optional)
 HF_TOKEN=your_huggingface_token
 HF_STRATEGY_MODEL=Qwen/Qwen2.5-72B-Instruct:fastest
+HF_CHAT_ENDPOINT=https://router.huggingface.co/v1/chat/completions
 
 # Provider routing
 STRATEGY_MODEL_PROVIDER=auto    # auto | huggingface | heuristic

@@ -43,7 +43,8 @@ export interface ChatCompletionOptions {
 /* ------------------------------------------------------------------ */
 
 export const DEFAULT_HF_CHAT_MODEL = "Qwen/Qwen2.5-72B-Instruct:fastest";
-const HF_CHAT_ENDPOINT = "https://router.huggingface.co/v1/chat/completions";
+const DEFAULT_HF_CHAT_ENDPOINT = "https://router.huggingface.co/v1/chat/completions";
+const MAX_ROUTER_ATTEMPTS = 2;
 
 /**
  * Current model info for transparency in UI.
@@ -76,41 +77,53 @@ export async function hfChatCompletion(
     return null;
   }
 
-  const model = options.model ?? process.env.HF_STRATEGY_MODEL ?? DEFAULT_HF_CHAT_MODEL;
+  const model = (options.model ?? process.env.HF_STRATEGY_MODEL ?? DEFAULT_HF_CHAT_MODEL).trim();
+  const endpoint = (process.env.HF_CHAT_ENDPOINT ?? DEFAULT_HF_CHAT_ENDPOINT).trim();
+  if (!model) {
+    console.warn("[hf-client] HF chat model is empty");
+    return null;
+  }
+  if (!endpoint) {
+    console.warn("[hf-client] HF chat endpoint is empty");
+    return null;
+  }
 
-  try {
-    const res = await fetchWithTimeout(HF_CHAT_ENDPOINT, {
-      method: "POST",
-      timeout: 45_000,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: options.messages,
-        max_tokens: options.max_tokens ?? 800,
-        temperature: options.temperature ?? 0.2,
-        ...(options.response_format ? { response_format: options.response_format } : {}),
-      }),
-    });
+  for (let attempt = 1; attempt <= MAX_ROUTER_ATTEMPTS; attempt += 1) {
+    try {
+      const res = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        timeout: 45_000,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: options.messages,
+          max_tokens: options.max_tokens ?? 800,
+          temperature: options.temperature ?? 0.2,
+          ...(options.response_format ? { response_format: options.response_format } : {}),
+        }),
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      const content = data?.choices?.[0]?.message?.content?.trim();
-      if (content) {
-        console.info(`[hf-client] ${model} succeeded via HF Router`);
-        return content;
+      if (res.ok) {
+        const data = await res.json();
+        const content = data?.choices?.[0]?.message?.content?.trim();
+        if (content) {
+          console.info(`[hf-client] ${model} succeeded via HF Router`);
+          return content;
+        }
+        console.warn(`[hf-client] ${model} returned empty content`);
+        return null;
       }
-      console.warn(`[hf-client] ${model} returned empty content`);
-      return null;
-    }
 
-    const status = res.status;
-    const errBody = await res.text().catch(() => "");
-    console.warn(`[hf-client] ${model} HTTP ${status}: ${errBody.slice(0, 250)}`);
-  } catch (e) {
-    console.warn(`[hf-client] ${model} failed:`, e);
+      const status = res.status;
+      const errBody = await res.text().catch(() => "");
+      console.warn(`[hf-client] ${model} HTTP ${status}: ${errBody.slice(0, 250)}`);
+      if (status !== 429 && status < 500) break;
+    } catch (e) {
+      console.warn(`[hf-client] ${model} attempt ${attempt} failed:`, e);
+    }
   }
 
   console.error(`[hf-client] HF Router failed for ${model}`);

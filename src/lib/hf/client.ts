@@ -45,6 +45,7 @@ export interface ChatCompletionOptions {
 export const DEFAULT_HF_CHAT_MODEL = "Qwen/Qwen2.5-72B-Instruct:fastest";
 const DEFAULT_HF_CHAT_ENDPOINT = "https://router.huggingface.co/v1/chat/completions";
 const MAX_ROUTER_ATTEMPTS = 2;
+const HF_MODEL_ID_PATTERN = /^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/;
 
 /**
  * Current model info for transparency in UI.
@@ -83,8 +84,22 @@ export async function hfChatCompletion(
     console.warn("[hf-client] HF chat model is empty");
     return null;
   }
+  if (!HF_MODEL_ID_PATTERN.test(model)) {
+    console.warn("[hf-client] HF chat model contains invalid characters");
+    return null;
+  }
   if (!endpoint) {
     console.warn("[hf-client] HF chat endpoint is empty");
+    return null;
+  }
+  try {
+    const parsedEndpoint = new URL(endpoint);
+    if (parsedEndpoint.protocol !== "https:") {
+      console.warn("[hf-client] HF chat endpoint must use HTTPS");
+      return null;
+    }
+  } catch {
+    console.warn("[hf-client] HF chat endpoint is invalid");
     return null;
   }
 

@@ -48,6 +48,7 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import urllib.error
           import urllib.request
           from pathlib import Path
 
@@ -83,14 +84,23 @@ jobs:
               f"PR diff:\n{diff}"
           )
 
+          model = os.getenv("HF_REVIEW_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct:fastest")
+          url = os.getenv("HF_REVIEW_URL", "https://router.huggingface.co/v1/chat/completions")
           payload = {
-              "inputs": prompt,
-              "parameters": {"max_new_tokens": 700, "temperature": 0.2},
-              "options": {"wait_for_model": True},
+              "model": model,
+              "messages": [
+                  {
+                      "role": "system",
+                      "content": "You are a concise senior software engineer reviewing a pull request.",
+                  },
+                  {"role": "user", "content": prompt},
+              ],
+              "max_tokens": 700,
+              "temperature": 0.2,
           }
 
           req = urllib.request.Request(
-              "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-Coder-32B-Instruct",
+              url,
               data=json.dumps(payload).encode(),
               headers={
                   "Authorization": f"Bearer {os.environ['HF_TOKEN']}",
@@ -101,18 +111,19 @@ jobs:
           try:
               with urllib.request.urlopen(req, timeout=120) as resp:
                   raw = json.loads(resp.read())
-              if isinstance(raw, list) and raw and "generated_text" in raw[0]:
-                  text = raw[0]["generated_text"]
-              elif isinstance(raw, dict) and "generated_text" in raw:
-                  text = raw["generated_text"]
-              else:
-                  text = f"Model returned unexpected payload:\n\n```json\n{json.dumps(raw)[:2500]}\n```"
+          except urllib.error.HTTPError as e:
+              body = e.read().decode("utf-8", errors="ignore")[:1000]
+              raise SystemExit(f"AI review call failed: HTTP {e.code} {body}")
           except Exception as e:
-              text = (
-                  "AI review call failed.\n\n"
-                  f"Error: `{e}`\n\n"
-                  "Fallback recommendation: run manual review and rerun workflow."
+              raise SystemExit(f"AI review call failed: {e}")
+
+          text = raw.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+          if not text:
+              raise SystemExit(
+                  "AI review call returned an empty or unexpected payload:\n"
+                  + json.dumps(raw)[:1000]
               )
+          text = f"_Model: `{model}` via Hugging Face Router_\n\n{text}"
 
           set_review_status("comment")
           out.write_text("## AI Review (Agent)\n\n" + text, encoding="utf-8")

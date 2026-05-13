@@ -1,6 +1,6 @@
 # Cotton Market Intelligence (CMI)
 
-A production cotton market intelligence platform that helps Bangladesh spinning mills decide **where the cotton market is likely heading** before turning that view into a practical procurement plan. The live app pulls Cotton #2 futures and cross-market factor data, computes statistical benchmarks, runs a TypeScript-native 8-model forecast stack, builds heuristic and sentiment candidates, then uses Qwen 2.5 7B as a final analyst synthesis layer when Hugging Face is configured. If hosted AI is unavailable, it degrades to transparent model-stack or heuristic outputs.
+A production cotton market intelligence platform that helps Bangladesh spinning mills decide **where the cotton market is likely heading** before turning that view into a practical procurement plan. The live app pulls Cotton #2 futures and cross-market factor data, computes statistical benchmarks, runs a TypeScript-native 8-model forecast stack, builds heuristic and sentiment candidates, then uses Qwen 2.5 72B as a final analyst synthesis layer when Hugging Face is configured. If hosted AI is unavailable, it degrades to transparent model-stack or heuristic outputs.
 
 **Live:** [cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app) | **Dev:** [cmi-notebooks-dev.vercel.app](https://cmi-notebooks-dev.vercel.app)
 
@@ -39,7 +39,7 @@ CMI answers three questions for a cotton procurement desk:
 |---|---|
 | **Price Intelligence** | Cotton #2 futures from Yahoo Finance. 1Y/5Y percentile rank, z-score, 30d/90d annualized volatility, 50d/200d MA, momentum. |
 | **Market Prediction (V3)** | 21-factor data pipeline, 48-feature engineering library, 8-model TypeScript stack, heuristic candidate, sentiment context, LLM analyst synthesis, 5d/21d/63d support, and 95% confidence bands. |
-| **LLM Analyst Synthesis** | Qwen 2.5 7B ingests quant model output, heuristic forecast, sentiment, headlines, and cross-market evidence to produce the final market call, like a senior commodity analyst rather than a blind ensemble. |
+| **LLM Analyst Synthesis** | Qwen 2.5 72B ingests quant model output, heuristic forecast, sentiment, headlines, and cross-market evidence to produce the final market call, like a senior commodity analyst rather than a blind ensemble. |
 | **Strategy Engine** | Constraint-aware procurement strategy via deterministic heuristic baseline plus optional Hugging Face strategy generation. It now ingests the final analyst market forecast before producing timing and pacing. |
 | **Decision Transparency** | Forecast responses show final source, validation note, evidence ingested by the analyst, top drivers, confidence band, sentiment, and fallback status. |
 | **Optional Landed Cost Utility** | A separate `/api/landed-cost` calculator exists for scenario work, but the main app is intentionally focused on market direction because landed cost assumptions vary by buyer and trade lane. |
@@ -73,7 +73,7 @@ CMI answers three questions for a cotton procurement desk:
            v                  v                  v
   MODEL STACK (8)        HF AI CONTEXT       HEURISTIC
   naive, mean, MA,       DistilRoBERTa       pct_rank, z_score
-  seasonal, ridge,       Qwen 2.5 7B         vol regime
+  seasonal, ridge,       Qwen 2.5 72B        vol regime
   elastic net,
   boosted stumps,
   boosted trees
@@ -306,7 +306,9 @@ Create `.env.local` for optional AI and forecast-history features:
 ```bash
 # AI strategy generation and analyst context (optional)
 HF_TOKEN=your_huggingface_token
-HF_STRATEGY_MODEL=Qwen/Qwen2.5-7B-Instruct
+HF_STRATEGY_MODEL=Qwen/Qwen2.5-72B-Instruct:fastest
+HF_STRATEGY_FALLBACK_MODELS=Qwen/Qwen2.5-Coder-32B-Instruct:fastest
+HF_CHAT_ENDPOINT=https://router.huggingface.co/v1/chat/completions
 
 # Provider routing
 STRATEGY_MODEL_PROVIDER=auto    # auto | huggingface | heuristic

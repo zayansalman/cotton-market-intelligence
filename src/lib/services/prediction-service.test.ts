@@ -40,7 +40,7 @@ const CACHED_RESPONSE: PredictionResponse = {
   }],
   model: {
     id: "llm_synthesis",
-    name: "LLM analyst synthesis (Qwen 2.5 7B)",
+    name: "LLM analyst synthesis (Qwen 2.5 72B)",
     kind: "llm_synthesis",
     train_samples: null,
     test_samples: null,

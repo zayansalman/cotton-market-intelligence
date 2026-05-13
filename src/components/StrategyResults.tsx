@@ -28,7 +28,11 @@ export default function StrategyResults({
     <>
       <SignalBadge strategy={strategy} />
 
-      <ModelInfo provider={strategy.provider} source={strategy.source} />
+      <ModelInfo
+        provider={strategy.provider}
+        providerStatus={strategy.provider_status}
+        source={strategy.source}
+      />
 
       {/* Market analysis */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">

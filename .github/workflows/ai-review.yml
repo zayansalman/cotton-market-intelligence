@@ -32,6 +32,7 @@ jobs:
           PY
 
       - name: Generate AI review (Hugging Face)
+        id: generate-review
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -44,22 +45,20 @@ jobs:
           diff = Path("pr.diff").read_text(encoding="utf-8", errors="ignore")
           out = Path("ai_review.md")
 
+          def set_review_status(status: str) -> None:
+              github_output = os.getenv("GITHUB_OUTPUT")
+              if github_output:
+                  with open(github_output, "a", encoding="utf-8") as fh:
+                      fh.write(f"status={status}\n")
+
           if not diff.strip():
-              out.write_text(
-                  "## AI Review (Agent)\n\nNo code diff detected for review.\n",
-                  encoding="utf-8",
-              )
+              set_review_status("skipped")
+              out.write_text("", encoding="utf-8")
               raise SystemExit(0)
 
           if not os.getenv("HF_TOKEN"):
-              out.write_text(
-                  "## AI Review (Agent)\n\n"
-                  "HF token not configured (`HF_TOKEN` secret missing), so AI review was skipped.\n\n"
-                  "### To enable\n"
-                  "- Add repository secret `HF_TOKEN`\n"
-                  "- Re-run this workflow on the PR\n",
-                  encoding="utf-8",
-              )
+              set_review_status("skipped")
+              out.write_text("", encoding="utf-8")
               raise SystemExit(0)
 
           prompt = (
@@ -108,10 +107,12 @@ jobs:
                   "Fallback recommendation: run manual review and rerun workflow."
               )
 
+          set_review_status("comment")
           out.write_text("## AI Review (Agent)\n\n" + text, encoding="utf-8")
           PY
 
       - name: Post AI review comment
+        if: steps.generate-review.outputs.status == 'comment'
         uses: actions/github-script@v8
         with:
           script: |
@@ -124,4 +125,3 @@ jobs:
               issue_number: pr,
               body
             });
-

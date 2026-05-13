@@ -139,8 +139,8 @@ function buildUserMessage(
   const tonnage = purchaserInput.demand.required_tonnes;
   const months = purchaserInput.demand.planning_horizon_months;
   const headlineSummary = headlines
-    .slice(0, 25)
-    .map((h) => ({ title: h.title, summary: h.summary.slice(0, 150) }));
+    .slice(0, marketForecast ? 8 : 16)
+    .map((h) => ({ title: h.title, summary: h.summary.slice(0, 90) }));
   const purchaserHighlights = [
     `- Total tonnage: ${tonnage.toLocaleString()} tonnes`,
     `- Horizon: ${months} months`,
@@ -182,9 +182,12 @@ ${JSON.stringify(
     confidence: marketForecast.confidence,
     reasoning: marketForecast.reasoning,
     risk: marketForecast.risk,
-    key_factors: marketForecast.key_factors,
-    forecast_evidence: marketForecast.forecast_evidence,
-    evidence_assessment: marketForecast.evidence_assessment,
+    key_factors: marketForecast.key_factors?.slice(0, 5),
+    evidence_summary: {
+      forecast_evidence_count: marketForecast.forecast_evidence?.length ?? 0,
+      evidence_assessment_count: marketForecast.evidence_assessment?.length ?? 0,
+      sentiment_score: marketForecast.sentiment?.aggregate_score ?? null,
+    },
   },
   null,
   2
@@ -329,7 +332,7 @@ async function runHuggingFaceStrategy(userMsg: string): Promise<Strategy | null>
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userMsg },
     ],
-    max_tokens: 900,
+    max_tokens: 750,
     temperature: 0.2,
   });
 
@@ -463,6 +466,7 @@ export async function POST(req: Request) {
     if (provider !== "heuristic" && quota.degraded_to_heuristic) {
       console.warn(`[strategy] Quota exceeded for request — degrading to heuristic. Reason: ${quota.reason}`);
       const result = { ...heuristicBaseResult };
+      result.provider_status = "quota_exceeded";
       result.risk_factors = [
         "Strategy AI quota exceeded — using deterministic strategy generation with the latest market forecast overlay.",
         ...result.risk_factors,
@@ -502,6 +506,18 @@ export async function POST(req: Request) {
     }
 
     const heuristicResult = { ...heuristicBaseResult };
+    if (provider !== "heuristic") {
+      heuristicResult.provider_status = "unavailable";
+      heuristicResult.risk_factors = [
+        "AI strategy provider was unavailable or timed out — using deterministic roadmap fallback with the latest market forecast overlay.",
+        ...heuristicResult.risk_factors.filter(
+          (risk) => !risk.toLowerCase().includes("statistical heuristic only")
+        ),
+      ];
+      heuristicResult.next_actions = heuristicResult.next_actions.filter(
+        (action) => !action.toLowerCase().includes("set hf_token")
+      );
+    }
     if (unifiedSignal) {
       heuristicResult.signal = unifiedSignal.signal;
       heuristicResult.confidence = Math.round(unifiedSignal.confidence * 100);

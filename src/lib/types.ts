@@ -59,6 +59,7 @@ export interface Strategy {
   key_levels?: KeyLevels;
   source: "ai" | "heuristic";
   provider?: "huggingface" | "heuristic";
+  provider_status?: "ok" | "unavailable" | "quota_exceeded" | "not_configured";
 }
 
 export interface LandedCostAssumptions {

@@ -2,9 +2,11 @@
 
 export default function ModelInfo({
   provider,
+  providerStatus,
   source,
 }: {
   provider?: string;
+  providerStatus?: string;
   source?: string;
 }) {
   const modelName =
@@ -26,9 +28,19 @@ export default function ModelInfo({
         <span className="text-zinc-200 font-medium">{modelName}</span>
       </div>
       <p className="text-zinc-500 mt-1">{description}</p>
-      {source === "heuristic" && (
+      {source === "heuristic" && providerStatus === "unavailable" && (
         <p className="text-amber-400/70 mt-1">
-          Set HF_TOKEN for AI-powered news analysis and geopolitical reasoning.
+          AI provider is configured but was unavailable or timed out, so this roadmap used the deterministic fallback.
+        </p>
+      )}
+      {source === "heuristic" && providerStatus === "quota_exceeded" && (
+        <p className="text-amber-400/70 mt-1">
+          AI quota was reached, so this roadmap used the deterministic fallback.
+        </p>
+      )}
+      {source === "heuristic" && !providerStatus && (
+        <p className="text-amber-400/70 mt-1">
+          Configure an AI provider for AI-powered strategy generation.
         </p>
       )}
     </div>

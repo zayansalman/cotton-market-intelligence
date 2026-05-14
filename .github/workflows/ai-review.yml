@@ -21,10 +21,10 @@ jobs:
 
       - name: Validate required AI secrets
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REVIEW_TOKEN: ${{ secrets.HF_REVIEW_TOKEN }}
         run: |
-          if [ -z "$HF_TOKEN" ]; then
-            echo "::error::HF_TOKEN GitHub Actions secret is required for AI PR Review. Add it under Repository settings > Secrets and variables > Actions."
+          if [ -z "$HF_REVIEW_TOKEN" ]; then
+            echo "::error::HF_REVIEW_TOKEN GitHub Actions secret is required for AI PR Review. Keep it separate from runtime analyst HF_TOKEN."
             exit 1
           fi
 
@@ -43,7 +43,9 @@ jobs:
       - name: Generate AI review (Hugging Face)
         id: generate-review
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REVIEW_TOKEN: ${{ secrets.HF_REVIEW_TOKEN }}
+          HF_REVIEW_MODEL: ${{ vars.HF_REVIEW_MODEL }}
+          HF_REVIEW_URL: ${{ vars.HF_REVIEW_URL }}
         run: |
           python - <<'PY'
           import json
@@ -66,8 +68,8 @@ jobs:
               out.write_text("", encoding="utf-8")
               raise SystemExit(0)
 
-          if not os.getenv("HF_TOKEN"):
-              raise SystemExit("HF_TOKEN GitHub Actions secret is required for AI PR Review.")
+          if not os.getenv("HF_REVIEW_TOKEN"):
+              raise SystemExit("HF_REVIEW_TOKEN GitHub Actions secret is required for AI PR Review.")
 
           prompt = (
               "You are an expert code reviewer. Review this PR diff with focus on:\n"
@@ -84,8 +86,8 @@ jobs:
               f"PR diff:\n{diff}"
           )
 
-          model = os.getenv("HF_REVIEW_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct:fastest")
-          url = os.getenv("HF_REVIEW_URL", "https://router.huggingface.co/v1/chat/completions")
+          model = os.getenv("HF_REVIEW_MODEL") or "Qwen/Qwen2.5-Coder-32B-Instruct:fastest"
+          url = os.getenv("HF_REVIEW_URL") or "https://router.huggingface.co/v1/chat/completions"
           payload = {
               "model": model,
               "messages": [
@@ -103,7 +105,7 @@ jobs:
               url,
               data=json.dumps(payload).encode(),
               headers={
-                  "Authorization": f"Bearer {os.environ['HF_TOKEN']}",
+                  "Authorization": f"Bearer {os.environ['HF_REVIEW_TOKEN']}",
                   "Content-Type": "application/json",
               },
           )

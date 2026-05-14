@@ -16,6 +16,7 @@ import { fetchWithTimeout } from "../fetch-with-timeout";
 import type { Benchmarks } from "@/lib/types";
 import type { MarketSentiment } from "./sentiment";
 import { DEFAULT_HF_CHAT_MODEL, hfChatCompletion, parseJsonResponse } from "./client";
+import { COTTON_QUANT_FORECAST_SYSTEM_PROMPT } from "./prompts";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -35,19 +36,6 @@ export interface HFForecast {
 /* ------------------------------------------------------------------ */
 /*  1. LLM Quant Analyst Forecast                                      */
 /* ------------------------------------------------------------------ */
-
-const QUANT_SYSTEM_PROMPT = `You are a quantitative commodity analyst specializing in cotton futures.
-Given market data, technical features, and news sentiment, provide a precise
-directional forecast.
-
-Return ONLY a JSON object:
-{
-  "direction": "up" | "down" | "flat",
-  "magnitude_pct": <expected return in % for the horizon>,
-  "confidence": <0-100>,
-  "key_drivers": ["<driver1>", "<driver2>", "<driver3>"],
-  "reasoning": "<2-3 sentence rationale>"
-}`;
 
 export async function llmForecast(
   benchmarks: Benchmarks,
@@ -86,7 +74,7 @@ Analyze all signals and provide your ${horizon} cotton price forecast.`;
   try {
     const text = await hfChatCompletion({
       messages: [
-        { role: "system", content: QUANT_SYSTEM_PROMPT },
+        { role: "system", content: COTTON_QUANT_FORECAST_SYSTEM_PROMPT },
         { role: "user", content: userMsg },
       ],
       max_tokens: 400,

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   COTTON_ANALYST_PROMPT_REGISTRY,
@@ -30,5 +31,28 @@ describe("cotton analyst prompt registry", () => {
     expect(COTTON_PROCUREMENT_STRATEGY_SYSTEM_PROMPT).toContain("Return ONLY a JSON object");
     expect(COTTON_NEWS_ANALYSIS_SYSTEM_PROMPT).toContain("Return ONLY a JSON object");
     expect(COTTON_QUANT_FORECAST_SYSTEM_PROMPT).toContain("Return ONLY a JSON object");
+  });
+
+  it("wires runtime LLM callers to the centralized analyst prompts", () => {
+    expect(readFileSync("src/lib/services/prediction-service.ts", "utf8")).toContain(
+      "COTTON_PRICE_PREDICTION_SYSTEM_PROMPT"
+    );
+    expect(readFileSync("src/app/api/strategy/route.ts", "utf8")).toContain(
+      "COTTON_PROCUREMENT_STRATEGY_SYSTEM_PROMPT"
+    );
+    expect(readFileSync("src/lib/hf/news-analysis.ts", "utf8")).toContain(
+      "COTTON_NEWS_ANALYSIS_SYSTEM_PROMPT"
+    );
+    expect(readFileSync("src/lib/hf/forecast.ts", "utf8")).toContain(
+      "COTTON_QUANT_FORECAST_SYSTEM_PROMPT"
+    );
+  });
+
+  it("keeps the GitHub review agent off runtime analyst config", () => {
+    const workflow = readFileSync(".github/workflows/ai-review.yml", "utf8");
+    expect(workflow).toContain("HF_REVIEW_TOKEN");
+    expect(workflow).toContain("HF_REVIEW_MODEL");
+    expect(workflow).not.toContain("secrets.HF_TOKEN");
+    expect(workflow).not.toContain("COTTON_");
   });
 });

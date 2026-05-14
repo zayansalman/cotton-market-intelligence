@@ -335,7 +335,7 @@ CMI uses separate LLM agents for separate jobs:
 | **Cotton analyst** | Next.js API routes on Vercel | `HF_TOKEN`, `HF_STRATEGY_MODEL`, `HF_STRATEGY_FALLBACK_MODELS`, `HF_CHAT_ENDPOINT` | `src/lib/hf/prompts.ts` |
 | **GitHub code reviewer** | GitHub Actions only | Secret `HF_REVIEW_TOKEN`, variables `HF_REVIEW_MODEL`, `HF_REVIEW_URL` | `.github/workflows/ai-review.yml` |
 
-The cotton analyst prompts are centralized in `src/lib/hf/prompts.ts` and cover final price synthesis, procurement strategy, news/geopolitical reasoning, and quant forecast support. The GitHub review workflow intentionally does not import those prompts or runtime env vars.
+The cotton analyst prompts are centralized in `src/lib/hf/prompts.ts` and cover final price synthesis, procurement strategy, news/geopolitical reasoning, and quant forecast support. The GitHub review workflow intentionally does **not** import those prompts, does **not** reference `secrets.HF_TOKEN`, and cannot read Vercel runtime env vars; it only receives its own GitHub Actions secret/variables.
 
 ### Forecast History Backend
 

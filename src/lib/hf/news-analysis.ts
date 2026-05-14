@@ -14,6 +14,7 @@
 import type { Benchmarks, Headline } from "@/lib/types";
 import type { MarketSentiment } from "./sentiment";
 import { hfChatCompletion, parseJsonResponse } from "./client";
+import { COTTON_NEWS_ANALYSIS_SYSTEM_PROMPT } from "./prompts";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -43,40 +44,6 @@ export interface NewsEvent {
   time_horizon: string;
   reasoning: string;
 }
-
-/* ------------------------------------------------------------------ */
-/*  Prompt                                                             */
-/* ------------------------------------------------------------------ */
-
-const NEWS_ANALYSIS_PROMPT = `You are a senior commodity analyst at a top-tier trading firm.
-Analyze these cotton market headlines for FORWARD-LOOKING price implications.
-
-CRITICAL RULES:
-- Think about CAUSALITY, not just sentiment. "Price is high" is not bearish if supply disruption is coming.
-- Consider second-order effects: India export ban → supply squeeze → price UP even if current price is high.
-- Political instability in producing countries → supply risk → bullish for cotton.
-- Trade wars/tariffs → demand disruption → direction depends on who is affected.
-- Weather events in cotton regions → supply impact with 3-6 month lag.
-- Look for signals that CONTRADICT the current price level — that's where the alpha is.
-
-Return ONLY a JSON object:
-{
-  "outlook": "bullish" | "bearish" | "neutral",
-  "confidence": <0.0-1.0>,
-  "implied_return_pct": <expected % move over next 1-3 months>,
-  "override_statistical": <true if news should override price-level signals>,
-  "override_reasoning": "<why override is or isn't warranted>",
-  "key_events": [
-    {
-      "event": "<what happened>",
-      "category": "geopolitical" | "supply" | "demand" | "policy" | "weather" | "trade",
-      "price_impact": "bullish" | "bearish" | "neutral",
-      "time_horizon": "<when impact expected>",
-      "reasoning": "<causal chain: event → mechanism → cotton price effect>"
-    }
-  ],
-  "reasoning": "<2-3 sentence forward-looking summary for the procurement team>"
-}`;
 
 /* ------------------------------------------------------------------ */
 /*  Analysis function                                                  */
@@ -116,7 +83,7 @@ Analyze these headlines for forward-looking cotton price implications. Focus on 
   try {
     const text = await hfChatCompletion({
       messages: [
-        { role: "system", content: NEWS_ANALYSIS_PROMPT },
+        { role: "system", content: COTTON_NEWS_ANALYSIS_SYSTEM_PROMPT },
         { role: "user", content: userMsg },
       ],
       max_tokens: 600,

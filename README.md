@@ -304,7 +304,7 @@ Open [http://localhost:3000](http://localhost:3000). The app works immediately w
 Create `.env.local` for optional AI and forecast-history features:
 
 ```bash
-# AI strategy generation and analyst context (optional)
+# Runtime cotton analyst agent (Vercel/app only)
 HF_TOKEN=your_huggingface_token
 HF_STRATEGY_MODEL=Qwen/Qwen2.5-72B-Instruct:fastest
 HF_STRATEGY_FALLBACK_MODELS=Qwen/Qwen2.5-Coder-32B-Instruct:fastest
@@ -325,6 +325,17 @@ SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
+
+### LLM Agent Separation
+
+CMI uses separate LLM agents for separate jobs:
+
+| Agent | Runtime | Config | Prompt Source |
+|---|---|---|---|
+| **Cotton analyst** | Next.js API routes on Vercel | `HF_TOKEN`, `HF_STRATEGY_MODEL`, `HF_STRATEGY_FALLBACK_MODELS`, `HF_CHAT_ENDPOINT` | `src/lib/hf/prompts.ts` |
+| **GitHub code reviewer** | GitHub Actions only | Secret `HF_REVIEW_TOKEN`, variables `HF_REVIEW_MODEL`, `HF_REVIEW_URL` | `.github/workflows/ai-review.yml` |
+
+The cotton analyst prompts are centralized in `src/lib/hf/prompts.ts` and cover final price synthesis, procurement strategy, news/geopolitical reasoning, and quant forecast support. The GitHub review workflow intentionally does not import those prompts or runtime env vars.
 
 ### Forecast History Backend
 

@@ -18,41 +18,10 @@ import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { computeUnifiedSignal } from "@/lib/engine/unified-signal";
 import type { UnifiedSignal } from "@/lib/engine/unified-signal";
 import { analyzeHeadlineSentiment } from "@/lib/hf/sentiment";
+import { COTTON_PROCUREMENT_STRATEGY_SYSTEM_PROMPT } from "@/lib/hf/prompts";
 import { heuristicStrategyV2 } from "@/lib/engine/heuristic-v2";
 import { getSupabase } from "@/lib/supabase";
 import { cacheKey } from "@/lib/cache-key";
-
-const SYSTEM_PROMPT = `You are a senior cotton procurement strategist and commodity analyst \
-for spinning mills in South Asia (Bangladesh, India, Pakistan).
-
-Your expertise:
-- Cotton #2 ICE futures and global spot markets
-- Supply/demand fundamentals: US, India, China, Brazil, West Africa
-- Seasonal patterns: planting (Mar-May), growing (Jun-Sep), harvest (Oct-Dec) Northern Hemisphere
-- South Asian demand: peak procurement Aug-Dec for winter/spring production runs
-- Risk management: a mill running out of cotton is catastrophic — bias conservative
-
-INSTRUCTIONS:
-- Analyze the market data and news headlines holistically.
-- Be specific and actionable — mills need exact tonnage guidance, not vague advice.
-- Consider the client's timeline urgency vs current market conditions.
-- When headlines are sparse or generic, weight statistical signals more heavily.
-
-Return ONLY a JSON object with these fields:
-{
-  "signal": "STRONG_BUY" | "BUY" | "HOLD" | "AVOID",
-  "confidence": <int 0-100>,
-  "executive_summary": "<2-3 sentences for the MD/CEO>",
-  "market_analysis": "<3-5 paragraph markdown analysis>",
-  "monthly_plan": [
-    {"month": 1, "pct": <percent of total>, "rationale": "<1 sentence>"},
-    ...
-  ],
-  "risk_factors": ["<risk>", ...],
-  "next_actions": ["<action>", ...],
-  "key_levels": {"support": <float>, "resistance": <float>, "fair_value": <float>}
-}
-The monthly_plan pct values MUST sum to 100.`;
 
 type StrategyProvider = "huggingface" | "heuristic";
 type SupabaseClientInstance = NonNullable<ReturnType<typeof getSupabase>>;
@@ -329,7 +298,7 @@ async function runHuggingFaceStrategy(userMsg: string): Promise<Strategy | null>
 
   const text = await hfChatCompletion({
     messages: [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: COTTON_PROCUREMENT_STRATEGY_SYSTEM_PROMPT },
       { role: "user", content: userMsg },
     ],
     max_tokens: 750,

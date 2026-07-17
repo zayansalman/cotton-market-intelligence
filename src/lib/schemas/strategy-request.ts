@@ -227,14 +227,41 @@ export function parseStrategyRequest(
       };
     }
 
-    const purchaserInput = legacyToPurchaserInput({
+    // Bounds validation: the legacy adapter builds a PurchaserInput shape but
+    // does NOT enforce numeric limits. Run the constructed input through the
+    // canonical schema so tonnage/months share the same bounds as the V2 path
+    // (tonnes ≥ 1, months int 1–24). Without this, values like months=1e9 or
+    // NaN reach the engine and blow up allocation/CPU per request (DoS).
+    const legacyInput = legacyToPurchaserInput({
       tonnage: body.tonnage as number,
       months: body.months as number,
     });
+    const piResult = purchaserInputSchema.safeParse(legacyInput);
+    if (!piResult.success) {
+      return {
+        ok: false,
+        errors: piResult.error.issues.map((issue) => {
+          const path = issue.path.join(".");
+          // Re-map canonical demand paths back to the legacy field names the
+          // caller actually sent, so error messages are actionable.
+          const field =
+            path === "demand.required_tonnes"
+              ? "tonnage"
+              : path === "demand.planning_horizon_months"
+                ? "months"
+                : path;
+          return {
+            field,
+            reason: issue.message,
+            suggested_fix: suggestedFix(issue),
+          };
+        }),
+      };
+    }
     return {
       ok: true,
       data: {
-        purchaserInput,
+        purchaserInput: piResult.data,
         benchmarks: bmResult.data as unknown as Benchmarks,
         headlines: hlResult.data as unknown as Headline[],
         landedCost: (lcResult.data as unknown as LandedCostResponse) ?? null,

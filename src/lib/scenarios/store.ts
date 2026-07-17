@@ -5,6 +5,7 @@
  * Version field enables future migrations.
  */
 
+import { purchaserInputSchema } from "../schemas/purchaser-input";
 import type { Scenario } from "./types";
 
 const STORAGE_KEY = "cmi_scenarios";
@@ -14,10 +15,53 @@ function readAll(): Scenario[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    return JSON.parse(raw) as Scenario[];
+    const parsed = JSON.parse(raw);
+    // Guard against a non-array payload (corrupted / hand-edited storage):
+    // callers like listScenarios() call .sort() and would crash otherwise.
+    return Array.isArray(parsed) ? (parsed as Scenario[]) : [];
   } catch {
     return [];
   }
+}
+
+/**
+ * Structural validation for an untrusted, parsed scenario object.
+ *
+ * There is no Zod schema for the whole Scenario, so we validate the fields the
+ * UI actually depends on to render (name, inputs, market snapshot, strategy,
+ * version). `inputs` is validated against the canonical Zod schema; the rest
+ * are defensive structural checks. `id` / `created_at` are intentionally not
+ * required here because importScenario reassigns them.
+ */
+function isValidScenarioShape(value: unknown): value is Scenario {
+  if (typeof value !== "object" || value === null) return false;
+  const s = value as Record<string, unknown>;
+
+  if (typeof s.name !== "string") return false;
+  if (s.version !== 1) return false;
+
+  // inputs — canonical Zod schema is the source of truth.
+  if (!purchaserInputSchema.safeParse(s.inputs).success) return false;
+
+  // market_snapshot.benchmarks must be an object.
+  if (typeof s.market_snapshot !== "object" || s.market_snapshot === null) {
+    return false;
+  }
+  const snapshot = s.market_snapshot as Record<string, unknown>;
+  if (typeof snapshot.benchmarks !== "object" || snapshot.benchmarks === null) {
+    return false;
+  }
+
+  // strategy — check the fields consumed by the scenario list / compare views.
+  if (typeof s.strategy !== "object" || s.strategy === null) return false;
+  const strategy = s.strategy as Record<string, unknown>;
+  if (typeof strategy.signal !== "string") return false;
+  if (typeof strategy.confidence !== "number") return false;
+  if (!Array.isArray(strategy.monthly_plan)) return false;
+  if (!Array.isArray(strategy.risk_factors)) return false;
+  if (!Array.isArray(strategy.next_actions)) return false;
+
+  return true;
 }
 
 function writeAll(scenarios: Scenario[]): void {
@@ -79,10 +123,24 @@ export function exportScenario(id: string): string | undefined {
 }
 
 export function importScenario(json: string): Scenario {
-  const scenario = JSON.parse(json) as Scenario;
-  // Assign new ID to avoid collisions
-  scenario.id = crypto.randomUUID();
-  scenario.created_at = new Date().toISOString();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new Error("Invalid scenario file: not valid JSON.");
+  }
+  if (!isValidScenarioShape(parsed)) {
+    throw new Error(
+      "Invalid scenario file: structure does not match the scenario schema."
+    );
+  }
+  // Only reached with a structurally-valid scenario — safe to persist.
+  const scenario: Scenario = {
+    ...parsed,
+    // Assign new ID / timestamp to avoid collisions with existing scenarios.
+    id: crypto.randomUUID(),
+    created_at: new Date().toISOString(),
+  };
   saveScenario(scenario);
   return scenario;
 }

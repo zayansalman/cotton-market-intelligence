@@ -14,6 +14,7 @@ build/
 .DS_Store
 *.pem
 .idea/
+perlage-yc-coding-session.md
 
 # debug
 npm-debug.log*

@@ -44,9 +44,17 @@ function syntheticFeatureRows(days: number = 400) {
 /* ------------------------------------------------------------------ */
 
 describe("naive model", () => {
-  it("predicts zero", () => {
-    const state = naiveModel.fit([], []);
-    expect(naiveModel.predict(state, []).value).toBe(0);
+  it("is a random walk — predicts the current price persists", () => {
+    // Targets are forward PRICE levels, so the honest naive baseline predicts
+    // that the current price persists (not a zero return).
+    const state = naiveModel.fit([[1], [2]], [0.6, 0.8], []);
+    // With a current price supplied, it predicts that price.
+    expect(naiveModel.predict(state, [], 0.72).value).toBe(0.72);
+    // Without a current price, it falls back to the mean of training targets.
+    expect(naiveModel.predict(state, []).value).toBeCloseTo(0.7, 5);
+    // With no training data and no current price, it degrades to 0.
+    const empty = naiveModel.fit([], [], []);
+    expect(naiveModel.predict(empty, []).value).toBe(0);
   });
 });
 

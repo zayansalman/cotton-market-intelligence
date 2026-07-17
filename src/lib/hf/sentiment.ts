@@ -50,15 +50,20 @@ interface HFClassificationResult {
   score: number;
 }
 
+const SENTIMENT_PER_BATCH_TIMEOUT_MS = 15_000;
+const SENTIMENT_DEFAULT_BUDGET_MS = 20_000;
+const SENTIMENT_MIN_BATCH_MS = 2_000;
+
 async function classifyBatch(
   texts: string[],
-  token: string
+  token: string,
+  timeoutMs: number = SENTIMENT_PER_BATCH_TIMEOUT_MS
 ): Promise<HFClassificationResult[][]> {
   const res = await fetchWithTimeout(
     `https://router.huggingface.co/hf-inference/models/${MODEL}`,
     {
       method: "POST",
-      timeout: 20_000,
+      timeout: timeoutMs,
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
@@ -96,7 +101,8 @@ async function classifyBatch(
  * Falls back gracefully if HF_TOKEN is missing.
  */
 export async function analyzeHeadlineSentiment(
-  headlines: { title: string; summary: string }[]
+  headlines: { title: string; summary: string }[],
+  opts: { deadlineAt?: number; budgetMs?: number } = {}
 ): Promise<MarketSentiment | null> {
   const token = process.env.HF_TOKEN;
   if (!token) {
@@ -105,6 +111,9 @@ export async function analyzeHeadlineSentiment(
   }
 
   if (headlines.length === 0) return null;
+
+  const deadlineAt =
+    opts.deadlineAt ?? Date.now() + (opts.budgetMs ?? SENTIMENT_DEFAULT_BUDGET_MS);
 
   // Combine title + summary for richer context, limit to 25 headlines
   const texts = headlines
@@ -115,9 +124,20 @@ export async function analyzeHeadlineSentiment(
     // Batch in groups of 10 (API limit)
     const allResults: HeadlineSentiment[] = [];
     for (let i = 0; i < texts.length; i += 10) {
+      const remaining = deadlineAt - Date.now();
+      // Stop starting new batches once the shared budget is nearly gone, so
+      // sentiment never eats the time the strategy/heuristic fallback needs.
+      if (remaining < SENTIMENT_MIN_BATCH_MS) {
+        console.warn("[hf-sentiment] budget exhausted — returning partial/none");
+        break;
+      }
       const batch = texts.slice(i, i + 10);
       const batchTitles = headlines.slice(i, i + 10);
-      const results = await classifyBatch(batch, token);
+      const results = await classifyBatch(
+        batch,
+        token,
+        Math.min(SENTIMENT_PER_BATCH_TIMEOUT_MS, remaining)
+      );
 
       for (let j = 0; j < results.length; j++) {
         const scores = results[j];

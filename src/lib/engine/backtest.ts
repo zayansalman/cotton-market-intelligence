@@ -18,7 +18,12 @@ import type { Benchmarks } from "@/lib/types";
 /* ------------------------------------------------------------------ */
 
 export interface BacktestConfig {
-  /** Total tonnes to procure in each simulated window. */
+  /**
+   * Total tonnes procured in each simulated window. Scales the reported
+   * `total_savings_usd` (per-lb savings × tonnage), so a larger book reports
+   * proportionally larger dollar savings. Per-lb and percentage metrics are
+   * tonnage-independent.
+   */
   tonnage: number;
   /** Months in each procurement window. */
   months: number;
@@ -27,6 +32,9 @@ export interface BacktestConfig {
   /** Minimum history required before first signal (trading days). */
   min_history?: number;
 }
+
+/** Pounds per metric tonne — converts $/lb savings into total USD. */
+const LBS_PER_TONNE = 2204.6226;
 
 export interface BacktestStep {
   decision_date: string;
@@ -44,6 +52,8 @@ export interface BacktestStep {
   savings_per_lb: number;
   /** Savings as % of benchmark price. */
   savings_pct: number;
+  /** Total USD saved on this window = savings_per_lb × tonnage × lbs/tonne. */
+  total_savings_usd: number;
 }
 
 export interface BacktestResult {
@@ -59,6 +69,8 @@ export interface BacktestSummary {
   avg_savings_per_lb: number;
   /** Average savings as %. */
   avg_savings_pct: number;
+  /** Total USD saved across all steps (scales with configured tonnage). */
+  total_savings_usd: number;
   /** Worst single step savings (most negative = worst underperformance). */
   worst_savings_pct: number;
   /** Best single step savings. */
@@ -208,8 +220,10 @@ export function runBacktest(
 
   // Walk through the price series at monthly intervals
   for (let idx = minHistory; idx < prices.length; idx += tradingDaysPerMonth * stepMonths) {
-    // Need enough forward data to simulate execution
-    const forwardEnd = idx + tradingDaysPerMonth * months;
+    // Execution starts on the bar AFTER the decision bar (see loop below), so
+    // the last day we need is prices[idx + tradingDaysPerMonth * months]. The
+    // slice end is exclusive, hence the +1.
+    const forwardEnd = idx + 1 + tradingDaysPerMonth * months;
     if (forwardEnd > prices.length) break;
 
     const bm = buildBenchmarksAt(prices, dates, idx);
@@ -224,8 +238,12 @@ export function runBacktest(
     const equalWeight = 1 / months;
 
     for (let m = 0; m < months; m++) {
-      const monthStart = idx + tradingDaysPerMonth * m;
-      const monthEnd = Math.min(idx + tradingDaysPerMonth * (m + 1), prices.length);
+      // FIX #2: execution window starts AFTER the decision bar (idx + 1). The
+      // decision at bar `idx` is made using data up to and including `idx`, so
+      // realized savings must be measured on subsequent bars only — otherwise a
+      // fully-recovered one-day dip at the decision bar reports fake savings.
+      const monthStart = idx + 1 + tradingDaysPerMonth * m;
+      const monthEnd = Math.min(idx + 1 + tradingDaysPerMonth * (m + 1), prices.length);
       const monthPrices = prices.slice(monthStart, monthEnd);
       if (monthPrices.length === 0) continue;
       const monthAvg = mean(monthPrices);
@@ -238,6 +256,8 @@ export function runBacktest(
     const savingsPct = benchmarkExecPrice > 0
       ? (savingsPerLb / benchmarkExecPrice) * 100
       : 0;
+    // FIX #4: tonnage now scales the reported dollar savings.
+    const totalSavingsUsd = savingsPerLb * tonnage * LBS_PER_TONNE;
 
     steps.push({
       decision_date: dates[idx],
@@ -251,6 +271,7 @@ export function runBacktest(
       benchmark_exec_price: Math.round(benchmarkExecPrice * 10000) / 10000,
       savings_per_lb: Math.round(savingsPerLb * 10000) / 10000,
       savings_pct: Math.round(savingsPct * 100) / 100,
+      total_savings_usd: Math.round(totalSavingsUsd),
     });
   }
 
@@ -268,6 +289,7 @@ function computeSummary(steps: BacktestStep[]): BacktestSummary {
       hit_rate_pct: 0,
       avg_savings_per_lb: 0,
       avg_savings_pct: 0,
+      total_savings_usd: 0,
       worst_savings_pct: 0,
       best_savings_pct: 0,
       signal_counts: {},
@@ -275,7 +297,13 @@ function computeSummary(steps: BacktestStep[]): BacktestSummary {
     };
   }
 
-  const hits = steps.filter((s) => s.savings_pct > 0).length;
+  // FIX #3: hit rate is wins / decisive bars. Structural ties (savings ≈ 0 —
+  // e.g. a HOLD signal whose equal-weight allocation IS the benchmark) are
+  // neither a win nor a loss, so they are excluded from the denominator instead
+  // of being silently counted as losses (which deflated the calibration rate).
+  const wins = steps.filter((s) => s.savings_pct > 0).length;
+  const losses = steps.filter((s) => s.savings_pct < 0).length;
+  const decisive = wins + losses;
 
   const signalCounts: Record<string, number> = {};
   const signalSavingsSum: Record<string, number> = {};
@@ -292,9 +320,10 @@ function computeSummary(steps: BacktestStep[]): BacktestSummary {
 
   return {
     total_steps: steps.length,
-    hit_rate_pct: Math.round((hits / steps.length) * 10000) / 100,
+    hit_rate_pct: decisive > 0 ? Math.round((wins / decisive) * 10000) / 100 : 0,
     avg_savings_per_lb: Math.round(mean(steps.map((s) => s.savings_per_lb)) * 10000) / 10000,
     avg_savings_pct: Math.round(mean(steps.map((s) => s.savings_pct)) * 100) / 100,
+    total_savings_usd: Math.round(steps.reduce((a, s) => a + s.total_savings_usd, 0)),
     worst_savings_pct: Math.round(Math.min(...steps.map((s) => s.savings_pct)) * 100) / 100,
     best_savings_pct: Math.round(Math.max(...steps.map((s) => s.savings_pct)) * 100) / 100,
     signal_counts: signalCounts,

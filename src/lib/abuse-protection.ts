@@ -9,6 +9,10 @@
  *
  * All controls are env-configurable and can be toggled without redeploy
  * (Vercel env vars update on next cold start).
+ *
+ * SERVERLESS CAVEAT: the offender map is module-level (per-instance), so the
+ * dynamic offender tracking is best-effort across a fleet of cold starts. The
+ * env denylist/allowlist and kill-switch ARE reliable (config, not counters).
  */
 
 import { NextResponse } from "next/server";

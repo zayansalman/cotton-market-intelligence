@@ -1,3 +1,12 @@
+/**
+ * In-memory sliding-window rate limiter.
+ *
+ * SERVERLESS CAVEAT: buckets live in a module-level Map, so state is
+ * per-instance on Vercel — cold starts reset it and concurrent instances each
+ * keep their own counts. Treat this as BEST-EFFORT abuse dampening, not a hard
+ * cross-instance guarantee; hard limiting belongs at the edge/WAF. The
+ * cost-critical global AI budget is enforced durably via src/lib/ai-budget.ts.
+ */
 import { NextResponse } from "next/server";
 
 export interface RateLimitConfig {

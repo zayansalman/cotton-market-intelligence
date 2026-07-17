@@ -167,9 +167,11 @@ export default function PriceChart({
   const visiblePreviousForecasts = showPreviousForecasts
     ? previousForecasts?.slice(0, 2) ?? []
     : [];
+  // Only append forecast/future dates when the overlay is actually enabled,
+  // otherwise the x-axis extends into an empty dead zone while hidden.
   const data = mergeData(
     prices,
-    forecast,
+    hasForecast ? forecast : undefined,
     visiblePreviousForecasts
   );
   const hasPreviousForecasts = visiblePreviousForecasts.length > 0;

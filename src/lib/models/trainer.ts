@@ -42,16 +42,32 @@ const TARGET_FIELD: Record<Horizon, keyof FeatureRow> = {
   "63d": "fwd_return_63d",
 };
 
-function extractMatrix(
+/** Trading-day horizon length — used for the purge gap (no look-ahead). */
+const HORIZON_DAYS: Record<Horizon, number> = {
+  "5d": 5,
+  "21d": 21,
+  "63d": 63,
+};
+
+/**
+ * A row that passed the target + coverage filters, kept RAW (nulls preserved)
+ * so imputation statistics can be derived from the train split only.
+ */
+interface ValidSample {
+  /** Raw feature values in featureNames order; null where missing/non-finite. */
+  raw: (number | null)[];
+  /** Forward PRICE target for the horizon. */
+  target: number;
+  /** Current cotton price at this row (for random-walk baselines + direction). */
+  current: number;
+  row: FeatureRow;
+}
+
+/** Collect valid rows without imputing — imputation happens after the split. */
+function extractValidSamples(
   rows: FeatureRow[],
   horizon: Horizon
-): {
-  features: number[][];
-  targets: number[];
-  featureNames: string[];
-  validRows: FeatureRow[];
-  imputationValues: number[];
-} {
+): { featureNames: string[]; samples: ValidSample[] } {
   const targetField = TARGET_FIELD[horizon];
   // Exclude sentiment_score from training features — it's always 0 in
   // historical data (only filled at prediction time). Including it adds
@@ -60,56 +76,60 @@ function extractMatrix(
     (name) => name !== "sentiment_score"
   );
 
-  // First pass: compute column means for imputation (not zero!)
-  // Zero-imputation creates fake signal — a null DXY doesn't mean DXY=0.
-  const colSums: number[] = new Array(featureNames.length).fill(0);
-  const colCounts: number[] = new Array(featureNames.length).fill(0);
-  for (const row of rows) {
-    featureNames.forEach((name, j) => {
-      const val = row.features[name];
-      if (val != null && Number.isFinite(val)) {
-        colSums[j] += val;
-        colCounts[j]++;
-      }
-    });
-  }
-  const imputationValues = colSums.map((s, j) =>
-    colCounts[j] > 0 ? s / colCounts[j] : 0
-  );
-
-  const features: number[][] = [];
-  const targets: number[] = [];
-  const validRows: FeatureRow[] = [];
-
   // Minimum feature coverage: skip rows where >40% of features are null.
   // First 252 rows typically have 50%+ nulls (MAs, RSI, percentile ranks
   // need lookback history). Training on these rows teaches the model
   // "predict 0 when inputs are sparse" — worse than useless.
   const MIN_COVERAGE = 0.6;
 
+  const samples: ValidSample[] = [];
   for (const row of rows) {
     const target = row[targetField] as number | null;
     if (target == null) continue;
 
     let validCount = 0;
-    const fVec = featureNames.map((name, j) => {
+    const raw = featureNames.map((name) => {
       const val = row.features[name];
       if (val != null && Number.isFinite(val)) {
         validCount++;
         return val;
       }
-      return imputationValues[j]; // Mean imputation, not zero
+      return null;
     });
 
-    // Skip rows with too many missing features
     if (validCount / featureNames.length < MIN_COVERAGE) continue;
 
-    features.push(fVec);
-    targets.push(target);
-    validRows.push(row);
+    samples.push({ raw, target, current: row.target, row });
   }
 
-  return { features, targets, featureNames, validRows, imputationValues };
+  return { featureNames, samples };
+}
+
+/**
+ * Per-column mean of the provided samples (mean-imputation values). A null DXY
+ * doesn't mean DXY=0, so we impute with the mean, not zero.
+ */
+function computeImputation(samples: ValidSample[], p: number): number[] {
+  const sums = new Array(p).fill(0);
+  const counts = new Array(p).fill(0);
+  for (const s of samples) {
+    for (let j = 0; j < p; j++) {
+      const v = s.raw[j];
+      if (v != null && Number.isFinite(v)) {
+        sums[j] += v;
+        counts[j]++;
+      }
+    }
+  }
+  return sums.map((sum, j) => (counts[j] > 0 ? sum / counts[j] : 0));
+}
+
+/** Apply imputation values to a raw feature vector (fill nulls). */
+function applyImputation(
+  raw: (number | null)[],
+  imputation: number[]
+): number[] {
+  return raw.map((v, j) => (v != null && Number.isFinite(v) ? (v as number) : imputation[j]));
 }
 
 /* ------------------------------------------------------------------ */
@@ -177,22 +197,43 @@ export function trainAndEvaluate(
   horizon: Horizon,
   trainPct: number = 0.8
 ): TrainResult {
-  const { features, targets, featureNames, validRows, imputationValues } =
-    extractMatrix(rows, horizon);
+  const { featureNames, samples } = extractValidSamples(rows, horizon);
+  const p = featureNames.length;
+  const horizonDays = HORIZON_DAYS[horizon];
 
-  const splitIdx = Math.floor(features.length * trainPct);
-  const trainX = features.slice(0, splitIdx);
-  const trainY = targets.slice(0, splitIdx);
-  const testX = features.slice(splitIdx);
-  const testY = targets.slice(splitIdx);
-  const testCurrent = validRows.slice(splitIdx).map((row) => row.target);
+  // Split by index, then PURGE the last horizonDays train rows: their forward
+  // targets overlap the test window (they realize after the split), so keeping
+  // them leaks look-ahead into training.
+  const splitIdx = Math.floor(samples.length * trainPct);
+  const trainEnd = Math.max(0, splitIdx - horizonDays);
+  const trainSamples = samples.slice(0, trainEnd);
+  const testSamples = samples.slice(splitIdx);
+
+  // Imputation stats from TRAIN rows ONLY — computing over all rows would leak
+  // test-set means into the training features.
+  const trainImputation = computeImputation(trainSamples, p);
+
+  const trainX = trainSamples.map((s) => applyImputation(s.raw, trainImputation));
+  const trainY = trainSamples.map((s) => s.target);
+  const testX = testSamples.map((s) => applyImputation(s.raw, trainImputation));
+  const testY = testSamples.map((s) => s.target);
+  const testCurrent = testSamples.map((s) => s.current);
+
+  // For LIVE inference we deliberately recompute imputation over ALL valid rows
+  // (train + test): at prediction time there is no held-out set to protect and
+  // we want the fullest possible estimate for each column. Used only by
+  // buildInferenceVector below — never for the held-out evaluation.
+  const imputationValues = computeImputation(samples, p);
 
   const results: ModelResult[] = [];
 
   for (const model of MODEL_REGISTRY) {
     const state = model.fit(trainX, trainY, featureNames);
 
-    const predictions = testX.map((x) => model.predict(state, x).value);
+    // Pass the current price so random-walk baselines predict "price persists".
+    const predictions = testX.map(
+      (x, k) => model.predict(state, x, testCurrent[k]).value
+    );
 
     const result: ModelResult = {
       model_id: model.meta.id,
@@ -236,7 +277,7 @@ export function trainAndEvaluate(
         r.direction_accuracy > naiveResult.direction_accuracy + 0.05)
   );
 
-  const champion =
+  const baseChampion =
     qualifiedModels.length > 0
       ? qualifiedModels[0]
       : naiveResult ?? results[0];
@@ -248,6 +289,22 @@ export function trainAndEvaluate(
       ? qualifiedModels
       : [naiveResult ?? results[0]]
   ).map((r) => r.model_id);
+
+  // Refit the champion on the FULL history (all valid rows, imputation derived
+  // over all valid rows) for LIVE inference — the eval state above only saw the
+  // first ~80%. We KEEP the held-out mae/rmse/direction_accuracy from the eval
+  // (those are the honest out-of-sample numbers); we only swap in the fuller
+  // state so predictChampion forecasts from every observation available.
+  let champion = baseChampion;
+  const championModel = MODEL_REGISTRY.find(
+    (m) => m.meta.id === baseChampion.model_id
+  );
+  if (championModel && samples.length > 0) {
+    const fullX = samples.map((s) => applyImputation(s.raw, imputationValues));
+    const fullY = samples.map((s) => s.target);
+    const fullState = championModel.fit(fullX, fullY, featureNames);
+    champion = { ...baseChampion, state: fullState };
+  }
 
   return { horizon, results, champion, top3Ids, featureNames, imputationValues };
 }
@@ -279,7 +336,8 @@ export function predictChampion(
     result.featureNames,
     result.imputationValues
   );
-  const prediction = model.predict(result.champion.state, features);
+  // Pass the current price so random-walk baselines forecast "price persists".
+  const prediction = model.predict(result.champion.state, features, row.target);
   if (!Number.isFinite(prediction.value)) return null;
 
   return {

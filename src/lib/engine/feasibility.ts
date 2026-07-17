@@ -15,7 +15,10 @@ import type { ConstraintResult } from "./constraints";
  * - Each constraint risk: -8
  * - Urgency: -10 (urgent), -20 (emergency)
  * - Single origin: -10
- * - Receipt capacity < avg monthly need: -15
+ * - Required tonnage > total receipt capacity (physically infeasible within the
+ *   horizon): heavy penalty AND capped at 25 so it never reads as comfortably
+ *   feasible
+ * - Receipt capacity tight (avg intake near the cap but still feasible): -10
  * - Credit days <= 60: -10
  * - Too many binding constraints (>5): -10
  */
@@ -43,10 +46,19 @@ export function scoreFeasibility(
 
   // Receipt capacity pressure
   if (input.timeline?.max_monthly_receipt_capacity_tonnes) {
-    const avgMonthly =
-      input.demand.required_tonnes / input.demand.planning_horizon_months;
-    if (input.timeline.max_monthly_receipt_capacity_tonnes < avgMonthly) {
-      score -= 15;
+    const cap = input.timeline.max_monthly_receipt_capacity_tonnes;
+    const required = input.demand.required_tonnes;
+    const months = input.demand.planning_horizon_months;
+    const totalCapacity = cap * months;
+    const avgMonthly = required / months;
+    if (required > totalCapacity) {
+      // Physically cannot fit within the horizon — must not read as comfortably
+      // feasible regardless of what else is set.
+      score -= 40;
+      score = Math.min(score, 25);
+    } else if (avgMonthly > cap * 0.85) {
+      // Feasible but tight — sustained intake sits near the cap.
+      score -= 10;
     }
   }
 

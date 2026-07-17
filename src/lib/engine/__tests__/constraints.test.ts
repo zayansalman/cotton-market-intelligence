@@ -58,8 +58,9 @@ describe("evaluateConstraints", () => {
     );
   });
 
-  it("caps multipliers when receipt capacity is limited", () => {
+  it("flags receipt capacity as infeasible when demand exceeds total capacity", () => {
     const input: PurchaserInput = {
+      // 3000t required vs 300t/mo × 6mo = 1800t receivable → infeasible.
       demand: { required_tonnes: 3000, planning_horizon_months: 6 },
       timeline: {
         urgency_level: "urgent",
@@ -67,8 +68,36 @@ describe("evaluateConstraints", () => {
       },
     };
     const result = evaluateConstraints(input, MOCK_BM, 6);
-    expect(result.binding_constraints.some((c) => c.includes("Receipt capacity"))).toBe(true);
-    expect(result.constraint_risks.length).toBeGreaterThan(0);
+    expect(
+      result.binding_constraints.some((c) => c.includes("Receipt capacity"))
+    ).toBe(true);
+    // Accurate risk note: surfaces the shortfall, not a false "extended timeline".
+    expect(
+      result.constraint_risks.some((r) =>
+        r.includes("exceeds total receipt capacity")
+      )
+    ).toBe(true);
+    // The cap no longer inverts the urgent front-load: enforcement is absolute
+    // on the final tonnage plan (heuristic-v2), so pacing multipliers keep the
+    // urgent shape (month 0 still elevated).
+    expect(result.pacing_multipliers[0]).toBeGreaterThan(1);
+  });
+
+  it("does not flag receipt capacity when demand fits within total capacity", () => {
+    const input: PurchaserInput = {
+      // 1500t required vs 300t/mo × 6mo = 1800t receivable → feasible.
+      demand: { required_tonnes: 1500, planning_horizon_months: 6 },
+      timeline: { max_monthly_receipt_capacity_tonnes: 300 },
+    };
+    const result = evaluateConstraints(input, MOCK_BM, 6);
+    // No infeasibility flag here — the feasible-but-clips case is surfaced by
+    // heuristicStrategyV2 (which owns the actual tonnage plan), not by
+    // evaluateConstraints.
+    expect(
+      result.binding_constraints.some((c) => c.includes("Receipt capacity"))
+    ).toBe(false);
+    // Assumption is still recorded regardless.
+    expect(result.assumption_set.max_monthly_receipt).toBe("300t");
   });
 
   it("flags single-origin risk", () => {

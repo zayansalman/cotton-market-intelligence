@@ -4,7 +4,12 @@
  * In-memory per-IP daily/monthly counters for AI strategy calls.
  * When quota is exhausted, strategy gracefully degrades to heuristic.
  *
- * All limits are configurable via environment variables.
+ * SERVERLESS CAVEAT: this state is per-instance (module-level Maps). On Vercel,
+ * cold starts reset it and concurrent invocations each keep their own counters,
+ * so these per-IP limits are BEST-EFFORT, not a hard cross-instance guarantee.
+ * The money-critical GLOBAL daily AI budget is enforced durably (atomic,
+ * cross-instance) via `src/lib/ai-budget.ts` + Supabase; hard per-IP limiting
+ * belongs at the edge/WAF layer. All limits are configurable via env vars.
  */
 
 /* ------------------------------------------------------------------ */

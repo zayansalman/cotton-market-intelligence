@@ -7,7 +7,7 @@
 import type { ForecastModel, ModelState, Prediction } from "./types";
 
 /* ------------------------------------------------------------------ */
-/*  Naive: predict zero return (random walk)                           */
+/*  Naive: true random walk — predict the current price persists        */
 /* ------------------------------------------------------------------ */
 
 export const naiveModel: ForecastModel = {
@@ -15,10 +15,17 @@ export const naiveModel: ForecastModel = {
     id: "naive",
     name: "Naive (Random Walk)",
     type: "baseline",
-    description: "Predicts zero return — price stays flat",
+    description: "Random walk — predicts the current price persists",
   },
-  fit: () => ({}),
-  predict: () => ({ value: 0 }),
+  // Store a fallback (mean of training price targets) for when no current
+  // price is supplied at inference. Targets are forward PRICE levels, so a
+  // random walk predicts the current price, not a zero return.
+  fit: (_features, targets) => ({
+    fallback: targets.length ? targets.reduce((s, v) => s + v, 0) / targets.length : 0,
+  }),
+  predict: (state, _features, currentPrice) => ({
+    value: currentPrice ?? (state.fallback as number) ?? 0,
+  }),
 };
 
 /* ------------------------------------------------------------------ */
@@ -30,7 +37,7 @@ export const historicalMeanModel: ForecastModel = {
     id: "hist_mean",
     name: "Historical Mean Return",
     type: "baseline",
-    description: "Predicts the average return observed in training data",
+    description: "Predicts the average price observed in training data",
   },
   fit: (_features, targets) => {
     const mean = targets.reduce((s, v) => s + v, 0) / targets.length;
@@ -50,7 +57,7 @@ export const movingAverageModel: ForecastModel = {
     id: "ma_return",
     name: "Moving Average Return (21d)",
     type: "baseline",
-    description: "Predicts the average of the last 21 training returns",
+    description: "Predicts the average of the last 21 training prices",
   },
   fit: (_features, targets) => {
     const window = Math.min(21, targets.length);
@@ -72,11 +79,14 @@ export const seasonalNaiveModel: ForecastModel = {
     id: "seasonal_naive",
     name: "Seasonal Naive (same month last year)",
     type: "baseline",
-    description: "Predicts using the average return from the same calendar month in training data",
+    description: "Predicts using the average price from the same calendar month in training data",
   },
   fit: (features, targets, featureNames) => {
+    // Store the month column index so predict reads the RIGHT feature. The old
+    // predict scanned for any value 1-12, which matched vol_regime/trend_regime
+    // before the real month column.
     const monthIdx = featureNames.indexOf("month");
-    if (monthIdx === -1) return { monthMeans: {} };
+    if (monthIdx === -1) return { monthMeans: {}, monthIdx: -1 };
 
     const monthSums: Record<number, { sum: number; count: number }> = {};
     for (let i = 0; i < targets.length; i++) {
@@ -90,13 +100,20 @@ export const seasonalNaiveModel: ForecastModel = {
     for (const [m, { sum, count }] of Object.entries(monthSums)) {
       monthMeans[Number(m)] = sum / count;
     }
-    return { monthMeans };
+    return { monthMeans, monthIdx };
   },
-  predict: (state, features) => {
+  predict: (state, features, currentPrice) => {
     const monthMeans = state.monthMeans as Record<number, number>;
-    // Month feature is at a known position — caller must ensure consistency
-    // We look for a value 1-12 in features
-    const month = features.find((v) => v >= 1 && v <= 12 && Number.isInteger(v));
-    return { value: (month != null ? monthMeans[month] : 0) ?? 0 };
+    const monthIdx = state.monthIdx as number;
+    const month = monthIdx >= 0 ? features[monthIdx] : undefined;
+    const lookup = month != null ? monthMeans[month] : undefined;
+    if (lookup != null && Number.isFinite(lookup)) return { value: lookup };
+
+    // Fallback: mean of all month means, else the current price, else 0.
+    const means = Object.values(monthMeans);
+    const fallback = means.length
+      ? means.reduce((s, v) => s + v, 0) / means.length
+      : currentPrice ?? 0;
+    return { value: fallback };
   },
 };

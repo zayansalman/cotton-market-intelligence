@@ -64,9 +64,21 @@ export default function PortfolioDashboard({
   const updateMill = useCallback(
     (id: string, updates: Partial<Pick<Mill, "name" | "input">>) => {
       setMills((prev) =>
-        prev.map((m) =>
-          m.id === id ? { ...m, ...updates, strategy: undefined } : m
-        )
+        prev.map((m) => {
+          if (m.id !== id) return m;
+          const next: Mill = { ...m, ...updates };
+          // Only invalidate the generated strategy when a strategy-relevant
+          // input actually changed. A pure rename (or an input edit that does
+          // not touch the strategy drivers) must preserve the existing result.
+          if (
+            updates.input !== undefined &&
+            !sameStrategyInputs(m.input, updates.input)
+          ) {
+            next.strategy = undefined;
+            next.generatedAt = undefined;
+          }
+          return next;
+        })
       );
     },
     []
@@ -145,11 +157,12 @@ export default function PortfolioDashboard({
   const summary = computePortfolioSummary(mills);
   const millsWithStrategy = mills.filter((m) => m.strategy);
 
-  // Chart data for stacked bar
+  // Chart data for stacked bar — keyed by stable mill id (not name) so that
+  // duplicate-named mills stay distinct and are never dropped/double-counted.
   const chartData = summary.aggregate_plan.map((row) => {
     const point: Record<string, unknown> = { month: `M${row.month}` };
     for (const entry of row.by_mill) {
-      point[entry.mill_name] = entry.tonnes;
+      point[entry.mill_id] = entry.tonnes;
     }
     return point;
   });
@@ -370,7 +383,8 @@ export default function PortfolioDashboard({
                     {millsWithStrategy.map((mill, idx) => (
                       <Bar
                         key={mill.id}
-                        dataKey={mill.name}
+                        dataKey={mill.id}
+                        name={mill.name}
                         stackId="portfolio"
                         fill={MILL_COLORS[idx % MILL_COLORS.length]}
                         radius={
@@ -438,6 +452,18 @@ export default function PortfolioDashboard({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Compares the mill inputs that actually drive strategy generation.
+ * generateForMill() sends only tonnage + planning horizon to /api/strategy,
+ * so those are the fields whose change should invalidate a cached strategy.
+ */
+function sameStrategyInputs(a: PurchaserInput, b: PurchaserInput): boolean {
+  return (
+    a.demand.required_tonnes === b.demand.required_tonnes &&
+    a.demand.planning_horizon_months === b.demand.planning_horizon_months
   );
 }
 

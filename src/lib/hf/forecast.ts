@@ -94,8 +94,14 @@ Analyze all signals and provide your ${horizon} cotton price forecast.`;
     };
 
     const direction = parsed.direction === "up" ? "up" : parsed.direction === "down" ? "down" : "flat";
-    const returnPct = Number(parsed.magnitude_pct) || 0;
-    const predictedReturn = direction === "down" ? -Math.abs(returnPct) / 100 : Math.abs(returnPct) / 100;
+    const rawReturnPct = Number(parsed.magnitude_pct);
+    const returnPct = Number.isFinite(rawReturnPct) ? rawReturnPct : 0;
+    // Preserve the model's SIGNED magnitude (previously forced positive for
+    // any non-down direction, so a negative "flat"/"up" move flipped sign).
+    // Only override the sign when it directly contradicts an explicit up/down.
+    let predictedReturn = returnPct / 100;
+    if (direction === "down" && predictedReturn > 0) predictedReturn = -predictedReturn;
+    if (direction === "up" && predictedReturn < 0) predictedReturn = -predictedReturn;
 
     return {
       provider: "hf_llm",

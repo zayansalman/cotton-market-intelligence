@@ -81,6 +81,13 @@ const TARGET_FIELD: Record<Horizon, keyof FeatureRow> = {
   "63d": "fwd_return_63d",
 };
 
+/** Trading-day horizon length — used for the purge gap (no look-ahead). */
+const HORIZON_DAYS: Record<Horizon, number> = {
+  "5d": 5,
+  "21d": 21,
+  "63d": 63,
+};
+
 /* ------------------------------------------------------------------ */
 /*  Walk-forward runner                                                */
 /* ------------------------------------------------------------------ */
@@ -92,7 +99,12 @@ export function runWalkForward(
 ): WalkForwardResult {
   const { min_train_size, step_size, horizon } = config;
   const targetField = TARGET_FIELD[horizon];
-  const featureNames = Object.keys(rows[0]?.features ?? {});
+  const horizonDays = HORIZON_DAYS[horizon];
+  // Exclude sentiment_score — it is always 0 in history (only filled at
+  // inference), matching the trainer's feature set for a fair comparison.
+  const featureNames = Object.keys(rows[0]?.features ?? {}).filter(
+    (name) => name !== "sentiment_score"
+  );
 
   const steps: WalkForwardStep[] = [];
 
@@ -100,14 +112,34 @@ export function runWalkForward(
     const target = rows[i][targetField] as number | null;
     if (target == null) continue;
 
-    // Training data: all rows before this point with valid targets
-    const trainRows = rows.slice(0, i).filter((r) => r[targetField] != null);
+    // Purge gap: rows in [i - horizonDays, i) have forward targets that
+    // realize on/after decision date i, so training on them leaks the future.
+    // Cut them from the training window before filtering for valid targets.
+    const trainRows = rows
+      .slice(0, Math.max(0, i - horizonDays))
+      .filter((r) => r[targetField] != null);
     if (trainRows.length < 30) continue;
 
-    const trainX = trainRows.map((r) =>
-      featureNames.map((name) => {
+    // Mean-impute missing features using TRAIN rows only (consistent with the
+    // trainer). Zero-imputation invents fake signal — a missing DXY is not
+    // DXY = 0. Fall back to 0 only when a column has no valid values at all.
+    const imputation = featureNames.map((name) => {
+      let sum = 0;
+      let count = 0;
+      for (const r of trainRows) {
         const v = r.features[name];
-        return v != null && Number.isFinite(v) ? v : 0;
+        if (v != null && Number.isFinite(v)) {
+          sum += v;
+          count++;
+        }
+      }
+      return count > 0 ? sum / count : 0;
+    });
+
+    const trainX = trainRows.map((r) =>
+      featureNames.map((name, j) => {
+        const v = r.features[name];
+        return v != null && Number.isFinite(v) ? v : imputation[j];
       })
     );
     const trainY = trainRows.map((r) => r[targetField] as number);
@@ -115,19 +147,23 @@ export function runWalkForward(
     // Fit model on training window
     const state = model.fit(trainX, trainY, featureNames);
 
-    // Predict at current point
-    const testFeatures = featureNames.map((name) => {
+    // Predict at current point (same train-derived imputation values)
+    const testFeatures = featureNames.map((name, j) => {
       const v = rows[i].features[name];
-      return v != null && Number.isFinite(v) ? v : 0;
+      return v != null && Number.isFinite(v) ? v : imputation[j];
     });
-    const prediction = model.predict(state, testFeatures);
+    const current = rows[i].target;
+    const prediction = model.predict(state, testFeatures, current);
     const predicted = prediction.value;
     const actual = target;
 
     const error = predicted - actual;
     const absError = Math.abs(error);
+    // Current-relative direction: targets are forward PRICE levels (always > 0),
+    // so compare each to the current price to score the up/down call. The old
+    // "actual >= 0" check was always true and made accuracy a degenerate 1.0.
     const directionCorrect =
-      (actual >= 0 && predicted >= 0) || (actual < 0 && predicted < 0);
+      (actual - current >= 0) === (predicted - current >= 0);
 
     steps.push({
       date: rows[i].date,

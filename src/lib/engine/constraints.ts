@@ -80,20 +80,24 @@ function evaluateTimeline(
 
   if (tl.max_monthly_receipt_capacity_tonnes) {
     const cap = tl.max_monthly_receipt_capacity_tonnes;
-    const avgMonthly = input.demand.required_tonnes / months;
-    if (avgMonthly > cap) {
-      binding.push(`Receipt capacity: ${cap}t/month caps front-loading`);
-      risks.push(
-        `Monthly receipt capacity (${cap}t) below average need (${Math.round(avgMonthly)}t/month) — forces extended timeline.`
-      );
-      // Cap high-volume months
-      for (let i = 0; i < months; i++) {
-        if (multipliers[i] > 1) {
-          multipliers[i] = Math.min(multipliers[i], cap / avgMonthly);
-        }
-      }
-    }
+    const required = input.demand.required_tonnes;
+    const totalCapacity = cap * months;
     assumptions.max_monthly_receipt = `${cap}t`;
+
+    // The absolute tonnes/month cap is ENFORCED on the final tonnage plan in
+    // heuristicStrategyV2 (post-normalization) — scaling relative pacing
+    // multipliers here cannot bind once weights are normalized to sum to 1, and
+    // it perversely inverts urgent front-loading. So we leave the multipliers
+    // untouched (the cap clips peaks without reordering) and only flag the one
+    // case the plan physically cannot satisfy: required volume exceeds total
+    // receivable capacity across the whole horizon.
+    if (required > totalCapacity) {
+      const shortfall = Math.round(required - totalCapacity);
+      binding.push(`Receipt capacity: ${cap}t/month cannot absorb required volume`);
+      risks.push(
+        `Required tonnage (${Math.round(required)}t) exceeds total receipt capacity over ${months} months (${Math.round(totalCapacity)}t) by ${shortfall}t — extend the horizon or raise monthly receipt capacity.`
+      );
+    }
   }
 }
 
@@ -177,12 +181,24 @@ function evaluateFinance(
 
   if (f.max_credit_days !== undefined) {
     assumptions.max_credit_days = `${f.max_credit_days}d`;
-    if (f.max_credit_days <= CREDIT_STRESS.soft_limit_days) {
+    // CREDIT_STRESS.soft_limit_days (assumptions.ts) is the point at/beyond
+    // which BD banks start pushing back. Credit strictly BELOW the soft limit
+    // is where genuine stress — and a real pacing effect — exists. Using `<`
+    // (was `<=`) stops mislabeling the boundary itself (creditFactor === 1,
+    // zero pacing effect) as a "binding" constraint. When it does bind, the
+    // multiplier actually dampens early-month pacing and the risk text matches.
+    if (f.max_credit_days < CREDIT_STRESS.soft_limit_days) {
+      const creditFactor = Math.max(
+        0.6,
+        f.max_credit_days / CREDIT_STRESS.soft_limit_days
+      );
       binding.push(`Credit limit: ${f.max_credit_days}d`);
-      // Short credit → can't stack too much in early months
-      const creditFactor = f.max_credit_days / CREDIT_STRESS.soft_limit_days;
+      risks.push(
+        `Credit terms of ${f.max_credit_days}d sit below the ${CREDIT_STRESS.soft_limit_days}d soft limit where banks start pushing back — early-month pacing dampened (×${creditFactor.toFixed(2)}) to limit concurrent L/C exposure.`
+      );
+      // Short credit → can't stack too much L/C exposure in the early months.
       for (let i = 0; i < Math.min(2, months); i++) {
-        multipliers[i] *= Math.max(0.6, creditFactor);
+        multipliers[i] *= creditFactor;
       }
     }
   }

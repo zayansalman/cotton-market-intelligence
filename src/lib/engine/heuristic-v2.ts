@@ -95,6 +95,32 @@ export function heuristicStrategyV2(
     lastPlan.tonnes += tonneDrift;
   }
 
+  // FIX #1: enforce an ABSOLUTE monthly receipt-capacity cap (tonnes/month) on
+  // the final tonnage plan, AFTER normalization. Only runs when a cap is
+  // configured, so the legacy / no-cap path above is left byte-for-byte
+  // unchanged. Peaks are clipped and overflow redistributed to months with
+  // headroom, preserving the front/back-loading order rather than inverting it.
+  const receiptCap = input.timeline?.max_monthly_receipt_capacity_tonnes;
+  if (receiptCap && receiptCap > 0) {
+    const capacity = enforceReceiptCapacity(
+      plan,
+      weights,
+      tonnage,
+      receiptCap,
+      months
+    );
+    if (capacity.feasible && capacity.clipped) {
+      // Feasible but the cap clips peak pacing — flag it honestly (constraints.ts
+      // only flags the infeasible case). No false "extended timeline" claim.
+      constraints.binding_constraints.push(
+        `Receipt capacity: ${receiptCap}t/month clips peak pacing`
+      );
+      constraints.constraint_risks.push(
+        `Monthly receipts capped at ${receiptCap}t — peak-month volume is redistributed across the horizon to fit warehouse intake (front/back-loading flattened, not extended).`
+      );
+    }
+  }
+
   // Summary text
   const above50 = benchmarks.above_ma_50d ? "above" : "below";
   const above200 = benchmarks.above_ma_200d ? "above" : "below";
@@ -173,4 +199,152 @@ export function heuristicStrategyV2(
     constraint_risks: constraints.constraint_risks,
     plan_feasibility_score: feasibilityScore,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Receipt-capacity enforcement (fix #1)                              */
+/* ------------------------------------------------------------------ */
+
+interface CapacityStatus {
+  /** Whether the required tonnage fits within cap × months over the horizon. */
+  feasible: boolean;
+  /** Whether the cap actually clipped one or more months' desired tonnage. */
+  clipped: boolean;
+  /** Tonnes that cannot be received within the horizon (0 when feasible). */
+  shortfall: number;
+}
+
+/**
+ * Enforce an absolute monthly receipt-capacity cap on the plan's tonnage,
+ * mutating `plan[i].tonnes` and `plan[i].pct` in place.
+ *
+ * - Feasible (required ≤ cap × months): peaks are clipped to the cap and the
+ *   overflow redistributed to months with headroom by descending desired
+ *   priority, so the front/back-loading order survives and the plan still sums
+ *   to the required tonnage.
+ * - Infeasible (required > cap × months): every month is pinned at the cap
+ *   (the maximum receivable) and the shortfall reported; no month exceeds the
+ *   cap and the plan does not pretend to deliver the full required volume.
+ */
+function enforceReceiptCapacity(
+  plan: MonthlyPlan[],
+  weights: number[],
+  requiredTonnes: number,
+  cap: number,
+  months: number
+): CapacityStatus {
+  const capCeil = Math.max(0, Math.floor(cap));
+  const totalCapacity = capCeil * months;
+  const feasible = requiredTonnes <= totalCapacity;
+  const targetTotal = feasible ? requiredTonnes : totalCapacity;
+
+  // Desired shape (exponential front/back-loading) expressed in tonnes.
+  const desired = weights.map((w) => requiredTonnes * w);
+  const clipped = desired.some((t) => t > capCeil + 1e-9);
+
+  const capped = capAndRedistribute(desired, capCeil, targetTotal);
+  const intTonnes = roundToSum(capped, targetTotal, capCeil);
+
+  for (let i = 0; i < plan.length; i++) {
+    plan[i].tonnes = intTonnes[i] ?? 0;
+    plan[i].pct =
+      requiredTonnes > 0
+        ? Math.round((plan[i].tonnes / requiredTonnes) * 1000) / 10
+        : 0;
+  }
+
+  return {
+    feasible,
+    clipped,
+    shortfall: feasible ? 0 : requiredTonnes - totalCapacity,
+  };
+}
+
+/**
+ * Clip each value to `cap` and redistribute the overflow into months that still
+ * have headroom, in descending desired-priority order so the shape's ordering
+ * is preserved (peaks clipped, never inverted). When `targetTotal` needs the
+ * full capacity, every month is pinned at the cap.
+ */
+function capAndRedistribute(
+  desired: number[],
+  cap: number,
+  targetTotal: number
+): number[] {
+  const n = desired.length;
+  if (n === 0) return [];
+  if (cap <= 0) return new Array(n).fill(0);
+  // Full capacity required → every month sits at the cap.
+  if (targetTotal >= cap * n - 1e-9) return new Array(n).fill(cap);
+
+  const t = desired.slice();
+  for (let iter = 0; iter < n + 2; iter++) {
+    let overflow = 0;
+    for (let i = 0; i < n; i++) {
+      if (t[i] > cap) {
+        overflow += t[i] - cap;
+        t[i] = cap;
+      }
+    }
+    if (overflow <= 1e-9) break;
+
+    // Under-cap months, highest desired first — keeps the front/back-loading
+    // order when placing the redistributed overflow.
+    const order: number[] = [];
+    for (let i = 0; i < n; i++) if (t[i] < cap - 1e-9) order.push(i);
+    order.sort((a, b) => desired[b] - desired[a] || a - b);
+
+    let remaining = overflow;
+    for (const i of order) {
+      const room = cap - t[i];
+      const add = Math.min(room, remaining);
+      t[i] += add;
+      remaining -= add;
+      if (remaining <= 1e-9) break;
+    }
+    if (remaining > 1e-9) break; // no headroom left (only when infeasible)
+  }
+  return t;
+}
+
+/**
+ * Round real tonnages to integers that sum exactly to `targetTotal` without any
+ * month exceeding `cap`. Positive drift is added to the month with the most
+ * headroom under the cap; negative drift is removed from the largest month.
+ */
+function roundToSum(values: number[], targetTotal: number, cap: number): number[] {
+  const rounded = values.map((v) => Math.round(v));
+  const capCeil = Number.isFinite(cap) ? cap : Infinity;
+  let drift = Math.round(targetTotal) - rounded.reduce((a, b) => a + b, 0);
+
+  let guard = 0;
+  const maxIter = rounded.length * (Math.abs(drift) + 1) + rounded.length + 10;
+  while (drift > 0 && guard++ < maxIter) {
+    let best = -1;
+    let bestRoom = 0;
+    for (let i = 0; i < rounded.length; i++) {
+      const room = capCeil - rounded[i];
+      if (room > bestRoom) {
+        bestRoom = room;
+        best = i;
+      }
+    }
+    if (best < 0) break; // no headroom under the cap
+    rounded[best] += 1;
+    drift -= 1;
+  }
+  while (drift < 0 && guard++ < maxIter) {
+    let best = -1;
+    let bestVol = 0;
+    for (let i = 0; i < rounded.length; i++) {
+      if (rounded[i] > bestVol) {
+        bestVol = rounded[i];
+        best = i;
+      }
+    }
+    if (best < 0) break;
+    rounded[best] -= 1;
+    drift += 1;
+  }
+  return rounded;
 }

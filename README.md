@@ -392,13 +392,9 @@ feature/<issue-id>-<slug>  -->  develop  -->  main
 
 ### Vercel (Production)
 
-One Vercel project, one deployed environment.
+One Vercel project, one deployed environment: `main` → `cmi-notebooks.vercel.app`, via `.github/workflows/deploy-prod.yml`.
 
-| Lane | Branch | URL |
-|---|---|---|
-| Prod | `main` | `cmi-notebooks.vercel.app` |
-
-`develop` is a code-only integration branch and deploys nothing, as do `feature/*`, `fix/*`, and `hotfix/*`. Merging `develop` into `main` ships straight to production. The `.github/workflows/deploy-prod.yml` workflow is the only deployment workflow.
+`develop` is a code-only integration branch and deploys nothing, as do `feature/*`, `fix/*`, and `hotfix/*`. Merging `develop` into `main` ships straight to production.
 
 ### Required Secrets
 

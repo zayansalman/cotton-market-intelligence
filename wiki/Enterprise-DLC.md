@@ -51,7 +51,7 @@ Additionally, PRs run `.github/workflows/ai-review.yml`:
 
 CD has a single explicit lane. **No other branches deploy.**
 
-### Prod lane
+### Prod lane (the only lane)
 - Branch: `main` (and manual dispatch)
 - Workflow: `.github/workflows/deploy-prod.yml`
 - Project: `cmi-notebooks`

@@ -495,11 +495,9 @@ page.tsx (client component, root orchestrator)
 ```
   GitHub Repository (cmi-notebooks)
         |
-        +-- develop branch
-        |     |
-        |     v
-        |   No deployment
-        |   Purpose: code-only integration branch
+        +-- develop branch  (integration only -- no deployment)
+        |
+        +-- feature/*, fix/*, hotfix/*  (no deployment)
         |
         +-- main branch
               |

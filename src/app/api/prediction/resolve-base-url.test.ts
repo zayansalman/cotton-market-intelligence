@@ -17,23 +17,29 @@ describe("resolveBaseUrl", () => {
   it("prefers an explicit APP_BASE_URL and strips trailing slashes", () => {
     process.env.APP_BASE_URL = "https://cmi.example.com/";
     process.env.VERCEL_URL = "deployment-xyz.vercel.app";
-    expect(resolveBaseUrl(reqWithHost("cmi-notebooks-dev.vercel.app"))).toBe(
+    expect(resolveBaseUrl(reqWithHost("cmi-notebooks.vercel.app"))).toBe(
       "https://cmi.example.com"
     );
   });
 
-  // REGRESSION GUARD: VERCEL_URL is the deployment-specific host, which sits
-  // behind Vercel Deployment Protection (302 -> SSO) on non-production
-  // targets. Preferring it over the public alias broke /api/prediction with a
-  // 502 "Market data unavailable" on the dev deployment.
+  // REGRESSION GUARD: VERCEL_URL is the deployment-specific host, which can sit
+  // behind Vercel Deployment Protection (302 -> SSO). Preferring it over the
+  // public alias broke /api/prediction with a 502 "Market data unavailable".
   it("prefers an allowlisted public Host over VERCEL_URL", () => {
     delete process.env.APP_BASE_URL;
     process.env.VERCEL_URL = "cmi-notebooks-hqm8wclcu-zayansalmans-projects.vercel.app";
-    expect(resolveBaseUrl(reqWithHost("cmi-notebooks-dev.vercel.app"))).toBe(
-      "https://cmi-notebooks-dev.vercel.app"
-    );
     expect(resolveBaseUrl(reqWithHost("cmi-notebooks.vercel.app"))).toBe(
       "https://cmi-notebooks.vercel.app"
+    );
+  });
+
+  // The retired cmi-notebooks-dev project's host is no longer ours, so it must
+  // be treated as any other untrusted Host rather than silently self-fetched.
+  it("no longer trusts the retired dev host", () => {
+    delete process.env.APP_BASE_URL;
+    process.env.VERCEL_URL = "deployment-xyz.vercel.app";
+    expect(resolveBaseUrl(reqWithHost("cmi-notebooks-dev.vercel.app"))).toBe(
+      "https://deployment-xyz.vercel.app"
     );
   });
 

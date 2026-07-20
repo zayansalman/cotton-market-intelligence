@@ -2,7 +2,7 @@
 
 A production cotton market intelligence platform that helps Bangladesh spinning mills decide **where the cotton market is likely heading** before turning that view into a practical procurement plan. The live app pulls Cotton #2 futures and cross-market factor data, computes statistical benchmarks, runs a TypeScript-native 8-model forecast stack, builds heuristic and sentiment candidates, then uses Qwen 2.5 72B as a final analyst synthesis layer when Hugging Face is configured. If hosted AI is unavailable, it degrades to transparent model-stack or heuristic outputs.
 
-**Live:** [cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app) | **Dev:** [cmi-notebooks-dev.vercel.app](https://cmi-notebooks-dev.vercel.app)
+**Live:** [cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app)
 
 ---
 
@@ -339,9 +339,9 @@ The cotton analyst prompts are centralized in `src/lib/hf/prompts.ts` and cover 
 
 ### Forecast History Backend
 
-The market prediction flow is still stateless by default. When Supabase is configured, `/api/prediction` stores each generated forecast, including the full chart path, in the `predictions` table, and `/api/forecast-history` resolves past target dates against actual Cotton #2 prices to compute direction accuracy and absolute error. Apply the files in `supabase/migrations/` to the Supabase project connected to both Vercel environments.
+The market prediction flow is still stateless by default. When Supabase is configured, `/api/prediction` stores each generated forecast, including the full chart path, in the `predictions` table, and `/api/forecast-history` resolves past target dates against actual Cotton #2 prices to compute direction accuracy and absolute error. Apply the files in `supabase/migrations/` to the Supabase project connected to Vercel.
 
-For Vercel, connect Supabase through the Marketplace or add the env vars above to the `develop` and `main` projects. The app degrades gracefully to an empty history overlay when Supabase is not configured.
+For Vercel, connect Supabase through the Marketplace or add the env vars above to the `cmi-notebooks` project. The app degrades gracefully to an empty history overlay when Supabase is not configured.
 
 ### Provider Routing
 
@@ -371,15 +371,18 @@ Higher defaults apply automatically in development (`NODE_ENV != production`).
 
 ```
 feature/<issue-id>-<slug>  -->  develop  -->  main
-         (work)              (dev deploy)   (prod deploy)
+         (work)            (integration,     (prod deploy)
+                            no deploy)
 ```
 
 1. Branch from `develop` (never from `main`)
 2. Name branches `feature/<issue-id>-<slug>` or `fix/<issue-id>-<slug>`
 3. Run `npm test` and `npm run build` before every commit
-4. PR into `develop` -- auto-deploys to dev URL on merge
-5. Release PR from `develop` to `main` -- auto-deploys to prod on merge
-6. Feature branch Vercel previews are disabled (`vercel.json`)
+4. Exercise changed API routes locally against `npm run dev` -- there is no staging environment
+5. PR into `develop` -- integration only, deploys nothing
+6. Release PR from `develop` to `main` -- auto-deploys to prod on merge. `main` is the blast radius, so this merge requires explicit human approval
+7. Smoke-test [cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app) after release
+8. Only `main` triggers a Vercel deployment. `develop`, `feature/*`, `fix/*`, and `hotfix/*` previews are disabled (`vercel.json`)
 
 **CI:** GitHub Actions runs build + full test suite on every push.
 
@@ -389,17 +392,19 @@ feature/<issue-id>-<slug>  -->  develop  -->  main
 
 ### Vercel (Production)
 
+One Vercel project, one deployed environment.
+
 | Lane | Branch | URL |
 |---|---|---|
-| Dev | `develop` | `cmi-notebooks-dev.vercel.app` |
 | Prod | `main` | `cmi-notebooks.vercel.app` |
+
+`develop` is a code-only integration branch and deploys nothing, as do `feature/*`, `fix/*`, and `hotfix/*`. Merging `develop` into `main` ships straight to production. The `.github/workflows/deploy-prod.yml` workflow is the only deployment workflow.
 
 ### Required Secrets
 
 ```
 VERCEL_TOKEN
 VERCEL_ORG_ID
-VERCEL_PROJECT_ID_DEV
 VERCEL_PROJECT_ID_PROD
 ```
 

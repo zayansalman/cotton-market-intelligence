@@ -90,13 +90,15 @@ Every significant engineering trade-off in Cotton Market Intelligence, with rati
 
 ## 8. Feature Branch Previews Disabled
 
-**Decision**: `vercel.json` explicitly disables Vercel Git Integration for `feature/*`, `fix/*`, and `hotfix/*` branches.
+**Decision**: `vercel.json` explicitly disables Vercel Git Integration for `develop`, `feature/*`, `fix/*`, and `hotfix/*` branches. `main` is the only branch that triggers a deployment.
 
-**Why**: Vercel's default behavior creates a preview deployment for every branch push. With active development across multiple feature branches, this consumes deployment minutes and creates stale preview URLs that nobody visits. The `develop` branch auto-deploys to `cmi-notebooks-dev.vercel.app`, which serves as the single staging environment.
+**Update -- supersedes the original rationale**: This decision was originally justified by pointing at `develop`, which auto-deployed to a separate Vercel staging project. That project has been retired and deleted, along with the `deploy-dev.yml` workflow that fed it. `develop` is now disabled in `vercel.json` alongside the feature branches -- it remains the branch that feature work merges into and branches off from, but it deploys nothing. There is exactly one deployed environment: the `cmi-notebooks` Vercel project at cmi-notebooks.vercel.app, shipped by merging `develop` into `main`.
+
+**Why**: Vercel's default behavior creates a preview deployment for every branch push. With active development across multiple feature branches, this consumes deployment minutes and creates stale preview URLs that nobody visits. Concentrating deployment on a single branch leaves exactly one URL that anyone has to trust.
 
 **Alternatives considered**: Allow all previews (rejected: quota waste), use Vercel's ignored build step (rejected: more complex, same outcome), separate CI with manual deploy triggers (rejected: over-engineering).
 
-**Trade-offs**: No per-PR preview URLs for reviewers. Reviewers must either check out the branch locally or wait for the PR to merge into `develop` to see it on the dev deployment. Acceptable given the small team size.
+**Trade-offs**: No per-PR preview URLs, and no staging environment at all -- nothing is exercised on deployed infrastructure before it is production. Verification moves to local and CI: `npm test` and `npm run build` must pass before a `develop` -> `main` PR, changed API routes are exercised against localhost via `npm run dev`, and the production URL is smoke-tested after release. Because `main` is now the entire blast radius, the `develop` -> `main` merge requires explicit human approval. Acceptable given the small team size.
 
 ---
 

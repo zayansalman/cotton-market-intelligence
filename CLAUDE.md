@@ -2,22 +2,29 @@
 
 ## Deployment rules (CRITICAL)
 
-- **NEVER push feature branches to trigger Vercel previews.** Feature branch previews are disabled in `vercel.json`.
-- Dev deployment: merge into `develop` → auto-deploys to `cmi-notebooks-dev.vercel.app`
-- Prod deployment: merge `develop` → `main` → auto-deploys to `cmi-notebooks.vercel.app`
-- The only branches that trigger Vercel deployments are `main` and `develop`.
+- **There is exactly one deployed environment: production.** Vercel project `cmi-notebooks` → https://cmi-notebooks.vercel.app
+- **`main` is the only branch that deploys.** Merging `develop` → `main` ships to production immediately.
+- **No branch other than `main` triggers a Vercel deployment.** `develop`, `feature/*`, `fix/*` and `hotfix/*` are all disabled in `vercel.json`. Never push a branch expecting a preview URL — there isn't one.
+- Because there is no staging environment, **`main` is the blast radius.** Always ask before merging to `main`.
 
 ## Git workflow
 
 - Branch from `develop`, not `main`
 - Branch naming: `feature/<issue-id>-<slug>`, `fix/<issue-id>-<slug>`
-- PR flow: `feature/*` → `develop` → validate on dev → `develop` → `main`
-- Commit and push to `develop` for dev testing without asking user permission
-- Always ask before merging to `main`
+- PR flow: `feature/*` → `develop` → `main`
+- Commit and push to `develop` without asking — it deploys nothing, so it is safe by construction
+- **Always ask before merging to `main`** — that merge is the production release
 
-## Dev URLs
+## Pre-merge verification
 
-- **Dev**: https://cmi-notebooks-dev.vercel.app
+`develop` has no deploy target, so verification happens locally and in CI, not on a URL:
+
+- `npm test` and `npm run build` must both pass before a `develop` → `main` PR
+- Exercise changed API routes against `npm run dev` on localhost
+- After merging to `main`, smoke-test https://cmi-notebooks.vercel.app before considering the release done
+
+## URL
+
 - **Prod**: https://cmi-notebooks.vercel.app
 
 ## Tech stack

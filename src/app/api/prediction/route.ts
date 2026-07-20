@@ -17,6 +17,7 @@ import { reserveGlobalAiBudget } from "@/lib/ai-budget";
 import { getSupabase } from "@/lib/supabase";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { createSupabasePredictionCache } from "@/lib/repositories/prediction-cache";
+import { resolveBaseUrl } from "./base-url";
 import type { Horizon } from "@/lib/models/types";
 import {
   generateMarketPrediction,
@@ -32,35 +33,6 @@ function predictionHorizonFrom(req: Request): Horizon {
   return VALID_HORIZONS.includes(horizonParam as Horizon)
     ? (horizonParam as Horizon)
     : "21d";
-}
-
-/**
- * Resolve the origin for internal self-fetches WITHOUT trusting the client
- * Host / X-Forwarded-Proto headers — those are attacker-controllable and
- * would let a spoofed `Host: evil.com` make the server fetch (and cache) data
- * from an arbitrary origin (SSRF + prediction-cache poisoning). Trust only
- * server-set config: an explicit APP_BASE_URL, Vercel's own VERCEL_URL, or an
- * exact-match allowlist for local/known deployment hosts.
- */
-function resolveBaseUrl(req: Request): string {
-  const configured =
-    process.env.APP_BASE_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
-  if (configured) return configured.replace(/\/+$/, "");
-
-  const host = req.headers.get("host") ?? "localhost:3000";
-  if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host)) {
-    return `http://${host}`;
-  }
-  const ALLOWED_HOSTS = new Set([
-    "cmi-notebooks.vercel.app",
-    "cmi-notebooks-dev.vercel.app",
-  ]);
-  if (ALLOWED_HOSTS.has(host)) return `https://${host}`;
-
-  // Unknown/spoofed host with no trusted config — stay on loopback rather
-  // than self-fetching an attacker-controlled origin.
-  return "http://localhost:3000";
 }
 
 async function fetchInternalJson<T>(

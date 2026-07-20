@@ -490,17 +490,14 @@ page.tsx (client component, root orchestrator)
 
 ## 9. Deployment
 
-### 9.1 Two Vercel Projects
+### 9.1 Single Vercel Project
 
 ```
   GitHub Repository (cmi-notebooks)
         |
-        +-- develop branch
-        |     |
-        |     v
-        |   Vercel Project: cmi-notebooks-dev
-        |   URL: cmi-notebooks-dev.vercel.app
-        |   Purpose: staging, QA, dev testing
+        +-- develop branch  (integration only -- no deployment)
+        |
+        +-- feature/*, fix/*, hotfix/*  (no deployment)
         |
         +-- main branch
               |
@@ -517,7 +514,7 @@ page.tsx (client component, root orchestrator)
   "git": {
     "deploymentEnabled": {
       "main": true,
-      "develop": true,
+      "develop": false,
       "feature/*": false,
       "fix/*": false,
       "hotfix/*": false
@@ -526,16 +523,19 @@ page.tsx (client component, root orchestrator)
 }
 ```
 
-Feature branches do not trigger Vercel deployments. This prevents stale preview deploys from consuming Vercel quota. All testing happens on the `develop` branch deployment.
+`main` is the only branch that triggers a Vercel deployment. Feature branches and `develop` do not deploy, which prevents stale preview deploys from consuming Vercel quota. Because there is no deployed staging environment, all testing happens locally and in CI.
 
 ### 9.3 CI/CD Flow
 
 ```
-developer -> feature/* branch -> PR to develop -> merge -> auto-deploy to dev
-          -> validate on dev -> PR to main -> merge -> auto-deploy to prod
+developer -> feature/* branch -> PR to develop -> merge (no deploy)
+          -> verify locally + in CI -> PR to main -> merge -> auto-deploy to prod
+          -> smoke-test cmi-notebooks.vercel.app
 ```
 
 Pre-commit checks: `npm test` (Vitest) and `npm run build` (TypeScript type checking) must pass before every push. The build step catches type errors across the entire codebase, including API route handlers and shared types.
+
+Verification happens before the merge, not after it. Both checks must pass before a `develop` -> `main` PR, and changed API routes should be exercised against localhost via `npm run dev`. Since `main` is the blast radius, the `develop` -> `main` merge requires explicit human approval.
 
 ### 9.4 Environment Variables
 

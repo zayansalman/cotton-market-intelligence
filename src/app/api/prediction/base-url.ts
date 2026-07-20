@@ -6,10 +6,7 @@
  */
 
 /** Public origins this app is served from. Exact-match only. */
-const ALLOWED_SELF_HOSTS = new Set([
-  "cmi-notebooks.vercel.app",
-  "cmi-notebooks-dev.vercel.app",
-]);
+const ALLOWED_SELF_HOSTS = new Set(["cmi-notebooks.vercel.app"]);
 
 function isLocalHost(host: string): boolean {
   return /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);

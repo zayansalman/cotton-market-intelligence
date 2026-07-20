@@ -61,11 +61,25 @@ describe("runWalkForward", () => {
     }
   });
 
-  it("naive model predicts zero at every step", () => {
+  it("naive model predicts the current price at every step (random walk)", () => {
     const result = runWalkForward(naiveModel, rows, config);
+    expect(result.steps.length).toBeGreaterThan(0);
     for (const step of result.steps) {
-      expect(step.predicted).toBe(0);
+      // Random walk => predicts the current cotton price persists (~$0.7/lb),
+      // not a degenerate 0.
+      expect(step.predicted).toBeGreaterThan(0.3);
+      expect(step.predicted).toBeLessThan(1.5);
     }
+  });
+
+  it("direction accuracy is not a degenerate 1.0", () => {
+    // With forward-PRICE targets the old (actual>=0)==(predicted>=0) check was
+    // always true (prices are positive) -> a fake 1.0. Current-relative
+    // direction on the naive baseline must yield a real, strictly sub-1.0 rate
+    // (it equals the fraction of steps where price actually rose).
+    const result = runWalkForward(naiveModel, rows, config);
+    expect(result.metrics.direction_accuracy).toBeLessThan(1);
+    expect(result.metrics.direction_accuracy).toBeGreaterThan(0);
   });
 
   it("linear model produces non-zero predictions", () => {

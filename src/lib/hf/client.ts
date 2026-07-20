@@ -36,6 +36,16 @@ export interface ChatCompletionOptions {
   max_tokens?: number;
   temperature?: number;
   response_format?: { type: "json_object" };
+  /**
+   * Absolute epoch-ms deadline shared across the whole request. No new HF
+   * attempt starts once it passes, so the total time spent here can never
+   * exceed the caller's remaining serverless budget — the function returns
+   * null (triggering the heuristic/model fallback) instead of being killed
+   * mid-flight by the Vercel maxDuration cap.
+   */
+  deadlineAt?: number;
+  /** Convenience: derive `deadlineAt` as now + budgetMs when not given. */
+  budgetMs?: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -47,6 +57,21 @@ const DEFAULT_HF_FALLBACK_MODELS = ["Qwen/Qwen2.5-Coder-32B-Instruct:fastest"];
 const DEFAULT_HF_CHAT_ENDPOINT = "https://router.huggingface.co/v1/chat/completions";
 const MAX_ROUTER_ATTEMPTS = 2;
 const HF_MODEL_ID_PATTERN = /^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/;
+/** Per-attempt hard timeout. */
+const PER_ATTEMPT_TIMEOUT_MS = 20_000;
+/**
+ * Default total wall-clock budget for the whole chat call (all models ×
+ * attempts). Kept well under the 60s Vercel function cap so the caller still
+ * has time to run its heuristic fallback and return a 200. Overridable so the
+ * route can share one deadline across sentiment + strategy.
+ */
+const DEFAULT_BUDGET_MS = 35_000;
+/** Don't start a new attempt with less than this much budget left. */
+const MIN_ATTEMPT_MS = 3_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function configuredFallbackModels(): string[] {
   const raw = process.env.HF_STRATEGY_FALLBACK_MODELS;
@@ -113,6 +138,10 @@ export async function hfChatCompletion(
   const models = [primaryModel, ...configuredFallbackModels()]
     .filter((model, index, all) => model && all.indexOf(model) === index);
 
+  const deadlineAt =
+    options.deadlineAt ??
+    Date.now() + (options.budgetMs ?? DEFAULT_BUDGET_MS);
+
   for (const model of models) {
     if (!HF_MODEL_ID_PATTERN.test(model)) {
       console.warn(`[hf-client] Skipping invalid HF chat model: ${model}`);
@@ -120,10 +149,15 @@ export async function hfChatCompletion(
     }
 
     for (let attempt = 1; attempt <= MAX_ROUTER_ATTEMPTS; attempt += 1) {
+      const remaining = deadlineAt - Date.now();
+      if (remaining < MIN_ATTEMPT_MS) {
+        console.warn("[hf-client] budget exhausted — yielding to fallback");
+        return null;
+      }
       try {
         const res = await fetchWithTimeout(endpoint, {
           method: "POST",
-          timeout: 45_000,
+          timeout: Math.min(PER_ATTEMPT_TIMEOUT_MS, remaining),
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
@@ -153,6 +187,16 @@ export async function hfChatCompletion(
         console.warn(`[hf-client] ${model} HTTP ${status}: ${errBody.slice(0, 250)}`);
         if (status === 401 || status === 403) return null;
         if (status !== 429 && status < 500) break;
+        // Transient (429 / 5xx): brief backoff before retrying, but never
+        // past the shared deadline. Immediate replay just re-hammers the same
+        // rate-limited token.
+        if (attempt < MAX_ROUTER_ATTEMPTS) {
+          const backoff = Math.min(
+            500 * attempt,
+            Math.max(0, deadlineAt - Date.now() - MIN_ATTEMPT_MS)
+          );
+          if (backoff > 0) await sleep(backoff);
+        }
       } catch (e) {
         console.warn(`[hf-client] ${model} attempt ${attempt} failed:`, e);
       }

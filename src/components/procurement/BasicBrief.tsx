@@ -21,8 +21,11 @@ export default function BasicBrief({
         </label>
         <input
           type="number"
-          value={tonnes}
-          onChange={(e) => onTonnesChange(Number(e.target.value))}
+          value={Number.isFinite(tonnes) ? tonnes : ""}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            onTonnesChange(Number.isFinite(n) ? n : 0);
+          }}
           min={1}
           step={500}
           className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-blue-500"

@@ -176,16 +176,32 @@ export interface PredictionServiceDependencies {
   completeChat?: typeof hfChatCompletion;
   parseChatJson?: typeof parseJsonResponse;
   analyzeSentiment?: typeof analyzeHeadlineSentiment;
+  /**
+   * Durable global AI-budget reservation, called once per cache-MISS right
+   * before any paid inference. Returns false when the global budget is spent,
+   * in which case this request degrades to the model stack / heuristic.
+   */
+  reserveAiBudget?: () => Promise<boolean>;
 }
 
 export interface GenerateMarketPredictionInput {
   horizon: Horizon;
   deps: PredictionServiceDependencies;
+  /**
+   * When false, skip ALL hosted-AI calls (LLM synthesis + sentiment) and use
+   * the local model stack / heuristic only. The route sets this from the AI
+   * usage quota so an exhausted budget makes zero paid inference calls.
+   */
+  allowAi?: boolean;
+  /** Shared LLM wall-clock budget (ms) across sentiment + synthesis. */
+  llmBudgetMs?: number;
 }
 
 export interface GenerateMarketPredictionResult {
   response: PredictionResponse;
   cacheHit: boolean;
+  /** True when a paid hosted-AI call (LLM or sentiment) was actually made. */
+  aiUsed: boolean;
 }
 
 export class PredictionMarketDataUnavailableError extends Error {
@@ -528,6 +544,66 @@ function confidence01(confidence: number | null | undefined): number | null {
   return confidence > 1 ? confidence / 100 : confidence;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Defensive coercion of untrusted LLM JSON                           */
+/*                                                                     */
+/*  The model can return arrays of the wrong shape. Never spread raw   */
+/*  parsed arrays into the response/cache — validate each element and  */
+/*  drop malformed ones so downstream consumers and Supabase only ever */
+/*  see well-formed records.                                           */
+/* ------------------------------------------------------------------ */
+
+function str(value: unknown, max = 300): string {
+  return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+function coerceKeyFactors(value: unknown): LlmForecast["key_factors"] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((f): f is Record<string, unknown> => isRecord(f))
+    .map((f) => ({
+      factor: str(f.factor, 200),
+      impact: str(f.impact, 50),
+      magnitude: str(f.magnitude, 50),
+    }))
+    .filter((f) => f.factor.length > 0)
+    .slice(0, 20);
+}
+
+function coerceEvidenceAssessment(value: unknown): EvidenceAssessment[] {
+  if (!Array.isArray(value)) return [];
+  const stances = new Set(["support", "contradict", "neutral"]);
+  const influences = new Set(["high", "medium", "low"]);
+  return value
+    .filter((e): e is Record<string, unknown> => isRecord(e))
+    .map((e) => ({
+      source: str(e.source, 200),
+      stance: stances.has(String(e.stance))
+        ? (String(e.stance) as EvidenceAssessment["stance"])
+        : "neutral",
+      influence: influences.has(String(e.influence))
+        ? (String(e.influence) as EvidenceAssessment["influence"])
+        : "low",
+      rationale: str(e.rationale, 500),
+    }))
+    .filter((e) => e.source.length > 0)
+    .slice(0, 20);
+}
+
+function coerceMethodology(value: unknown): LlmForecast["methodology"] {
+  if (!isRecord(value)) return null;
+  const out: NonNullable<LlmForecast["methodology"]> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!isRecord(raw)) continue;
+    out[key.slice(0, 60)] = {
+      signal: str(raw.signal, 30),
+      observation: str(raw.observation, 400),
+      weight: str(raw.weight, 30),
+    };
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 function buildForecastEvidence(
   modelStackForecast: ModelStackForecast | null,
   heuristicForecast: DeterministicForecast,
@@ -614,20 +690,36 @@ function confidenceIntervalForFinalForecast(
   };
 }
 
+const DEFAULT_PREDICTION_LLM_BUDGET_MS = 45_000;
+
 export async function generateMarketPrediction({
   horizon,
   deps,
+  allowAi = true,
+  llmBudgetMs = DEFAULT_PREDICTION_LLM_BUDGET_MS,
 }: GenerateMarketPredictionInput): Promise<GenerateMarketPredictionResult> {
   const pricesData = await deps.fetchPrices();
   const bm = pricesData?.benchmarks;
   if (!bm) throw new PredictionMarketDataUnavailableError();
+
+  // Shared deadline across every hosted-AI call in this request so the total
+  // never exceeds the serverless function budget (falls back instead of 500).
+  const llmDeadlineAt = Date.now() + llmBudgetMs;
+  let aiUsed = false;
 
   const currentPrice = bm.current_price;
   const cachedPrediction = deps.cache
     ? await deps.cache.read(bm.price_date, horizon)
     : null;
   if (cachedPrediction) {
-    return { response: cachedPrediction, cacheHit: true };
+    return { response: cachedPrediction, cacheHit: true, aiUsed: false };
+  }
+
+  // Reserve one unit of the durable global AI budget now that we know this is
+  // a cache miss. If the budget is spent, fall back to non-AI generation.
+  let aiAllowed = allowAi;
+  if (aiAllowed && deps.reserveAiBudget) {
+    aiAllowed = await deps.reserveAiBudget().catch(() => true);
   }
 
   const fetchCrossMarketQuotes =
@@ -641,7 +733,15 @@ export async function generateMarketPrediction({
     title: headline.title,
     summary: headline.summary ?? "",
   }));
-  const sentiment = await analyzeSentiment(sentimentHeadlines).catch(() => null);
+  // Sentiment is a paid HF inference call — skip it entirely when AI is not
+  // allowed (quota exhausted) so the cost guardrail actually holds here.
+  let sentiment: SentimentResult | null = null;
+  if (aiAllowed) {
+    sentiment = await analyzeSentiment(sentimentHeadlines, {
+      deadlineAt: llmDeadlineAt,
+    }).catch(() => null);
+    if (sentiment) aiUsed = true;
+  }
 
   const crossMarket = crossMarketQuotes
     .filter((q) => q.price != null)
@@ -705,14 +805,18 @@ Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not
 
   const completeChat = deps.completeChat ?? hfChatCompletion;
   const parseChatJson = deps.parseChatJson ?? parseJsonResponse;
-  const llmText = await completeChat({
-    messages: [
-      { role: "system", content: COTTON_PRICE_PREDICTION_SYSTEM_PROMPT },
-      { role: "user", content: synthesisMsg },
-    ],
-    max_tokens: 1000,
-    temperature: 0.2,
-  }).catch(() => null);
+  const llmText = aiAllowed
+    ? await completeChat({
+        messages: [
+          { role: "system", content: COTTON_PRICE_PREDICTION_SYSTEM_PROMPT },
+          { role: "user", content: synthesisMsg },
+        ],
+        max_tokens: 1000,
+        temperature: 0.2,
+        deadlineAt: llmDeadlineAt,
+      }).catch(() => null)
+    : null;
+  if (aiAllowed && llmText) aiUsed = true;
 
   let analystForecast: AnalystSynthesisForecast | null = null;
   if (llmText) {
@@ -732,18 +836,11 @@ Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not
                 ? "down"
                 : "flat",
           confidence: Math.min(95, Math.max(10, Number(parsed.confidence) || 50)),
-          reasoning: String(parsed.reasoning || ""),
-          key_factors: Array.isArray(parsed.key_factors)
-            ? parsed.key_factors as LlmForecast["key_factors"]
-            : [],
-          evidence_assessment: Array.isArray(parsed.evidence_assessment)
-            ? parsed.evidence_assessment as EvidenceAssessment[]
-            : [],
-          risk: String(parsed.risk || ""),
-          methodology:
-            parsed.methodology && typeof parsed.methodology === "object"
-              ? parsed.methodology as LlmForecast["methodology"]
-              : null,
+          reasoning: str(parsed.reasoning, 4000),
+          key_factors: coerceKeyFactors(parsed.key_factors),
+          evidence_assessment: coerceEvidenceAssessment(parsed.evidence_assessment),
+          risk: str(parsed.risk, 3000),
+          methodology: coerceMethodology(parsed.methodology),
         };
       }
     }
@@ -888,12 +985,18 @@ Produce the FINAL analyst forecast. Use the candidate forecasts as evidence, not
     hf_forecasts: [],
   };
 
-  await deps.cache?.write({
-    response,
-    forecast,
-    targetDate: addBusinessDays(response.current_date, horizonDays),
-    forecastPoints,
-  });
+  // Do NOT pin a heuristic fallback for the rest of the trading day: a
+  // transient HF/model outage would otherwise serve the low-confidence
+  // heuristic to every later request. Only cache a "real" forecast (LLM
+  // synthesis or the validated model stack); heuristic days retry next call.
+  if (responseModel.kind !== "heuristic_fallback") {
+    await deps.cache?.write({
+      response,
+      forecast,
+      targetDate: addBusinessDays(response.current_date, horizonDays),
+      forecastPoints,
+    });
+  }
 
-  return { response, cacheHit: false };
+  return { response, cacheHit: false, aiUsed };
 }

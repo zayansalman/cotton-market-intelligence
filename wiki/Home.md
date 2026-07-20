@@ -2,7 +2,7 @@
 
 Production cotton market intelligence platform for South Asian spinning mills. LLM analyst synthesis over model-stack forecasts, strategy generation, and portfolio management.
 
-**Live:** https://cmi-notebooks.vercel.app | **Dev:** https://cmi-notebooks-dev.vercel.app
+**Live:** https://cmi-notebooks.vercel.app
 
 ---
 

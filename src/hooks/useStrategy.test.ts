@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildStrategyRequestBody } from "./useStrategy";
+import { buildStrategyRequestBody, largestRemainder } from "./useStrategy";
 import type { PurchaserInput, Benchmarks } from "@/lib/types";
 
 const MOCK_BENCHMARKS: Benchmarks = {
@@ -89,5 +89,31 @@ describe("buildStrategyRequestBody", () => {
     });
 
     expect(result.marketForecast).toEqual(marketForecast);
+  });
+});
+
+describe("largestRemainder", () => {
+  it("apportions tonnes so they sum to exactly the total", () => {
+    const alloc = largestRemainder([1.5, 1.5, 1, 1, 1, 1], 3000);
+    expect(alloc.reduce((s, v) => s + v, 0)).toBe(3000);
+    expect(alloc.every((v) => Number.isInteger(v))).toBe(true);
+  });
+
+  it("apportions pct-tenths so they sum to exactly 1000 (=100.0%)", () => {
+    const weights = [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]; // 7 equal months
+    const tenths = largestRemainder(weights, 1000);
+    expect(tenths.reduce((s, v) => s + v, 0)).toBe(1000);
+  });
+
+  it("keeps proportionality — larger weights get more units", () => {
+    const alloc = largestRemainder([3, 1], 100);
+    expect(alloc[0]).toBeGreaterThan(alloc[1]);
+    expect(alloc[0] + alloc[1]).toBe(100);
+  });
+
+  it("handles zero/negative weights and totals safely", () => {
+    expect(largestRemainder([0, 0], 100)).toEqual([0, 0]);
+    expect(largestRemainder([1, 1], 0)).toEqual([0, 0]);
+    expect(largestRemainder([-1, 2], 90)).toEqual([0, 90]);
   });
 });

@@ -5,7 +5,7 @@
 export type Horizon = "5d" | "21d" | "63d";
 
 export interface Prediction {
-  /** Point forecast (return, not price). */
+  /** Point forecast — a forward PRICE level (targets are prices, not returns). */
   value: number;
   /** Optional prediction interval. */
   lower?: number;
@@ -40,8 +40,18 @@ export interface ForecastModel {
 
   /**
    * Predict using fitted model state.
+   *
+   * @param currentPrice - Optional current cotton price at the decision date.
+   *   Supervised targets are forward PRICE levels (not returns), so random-walk
+   *   style baselines use this to predict "the current price persists". Models
+   *   that ignore it (regressions, trees) are unaffected — the arg is optional
+   *   and backward-compatible.
    */
-  predict(state: ModelState, features: number[]): Prediction;
+  predict(
+    state: ModelState,
+    features: number[],
+    currentPrice?: number
+  ): Prediction;
 }
 
 /** Serializable model state. */

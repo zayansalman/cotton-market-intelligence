@@ -88,13 +88,21 @@ export function exportPortfolioJson(mills: Mill[]): string {
   );
 }
 
+/** RFC-4180 CSV field escaping: quote fields containing , " or newlines. */
+function csvField(value: string | number): string {
+  const s = String(value);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 /**
- * Export portfolio as CSV.
+ * Export portfolio as CSV. Mill columns are keyed by stable mill id (not name)
+ * so duplicate-named mills stay distinct, and every field is CSV-escaped so
+ * names containing commas/quotes cannot corrupt the layout.
  */
 export function exportPortfolioCsv(mills: Mill[]): string {
   const summary = computePortfolioSummary(mills);
   const lines: string[] = [
-    "Month," + mills.map((m) => m.name).join(",") + ",Total",
+    ["Month", ...mills.map((m) => csvField(m.name)), "Total"].join(","),
   ];
 
   for (const row of summary.aggregate_plan) {
@@ -103,7 +111,7 @@ export function exportPortfolioCsv(mills: Mill[]): string {
       return entry?.tonnes ?? 0;
     });
     lines.push(
-      `${row.month},${millValues.join(",")},${row.total_tonnes}`
+      [row.month, ...millValues.map(csvField), row.total_tonnes].join(",")
     );
   }
 

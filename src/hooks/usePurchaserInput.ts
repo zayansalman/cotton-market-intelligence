@@ -20,6 +20,9 @@ export function usePurchaserInput() {
 
   const updateDemand = useCallback(
     (patch: Partial<PurchaserInput["demand"]>) => {
+      // Any edit invalidates the last validation pass — clear stale errors so
+      // fixing a flagged field immediately removes its red message.
+      setValidationErrors([]);
       setInput((prev) => ({
         ...prev,
         demand: { ...prev.demand, ...patch },
@@ -33,6 +36,7 @@ export function usePurchaserInput() {
       section: K,
       patch: Partial<NonNullable<PurchaserInput[K]>>
     ) => {
+      setValidationErrors([]);
       setInput((prev) => ({
         ...prev,
         [section]: { ...(prev[section] ?? {}), ...patch },
@@ -42,11 +46,13 @@ export function usePurchaserInput() {
   );
 
   const applyPreset = useCallback((name: PresetName) => {
+    setValidationErrors([]);
     setInput(structuredClone(PRESETS[name]));
     setAdvancedMode(true);
   }, []);
 
   const resetToBasic = useCallback(() => {
+    setValidationErrors([]);
     setInput((prev) => ({
       demand: {
         required_tonnes: prev.demand.required_tonnes,

@@ -8,9 +8,9 @@ For day-to-day execution steps (onboarding, release checklist, rollback), see `w
 
 | Branch | Purpose |
 |---|---|
-| `main` | Production-only branch (release merges only) |
-| `develop` | Integration branch (all feature PRs merge here first) |
-| `feature/*` | Short-lived, issue-driven branches |
+| `main` | Production-only branch (release merges only); the only branch that deploys |
+| `develop` | Code-only integration branch (all feature PRs merge here first); deploys nothing |
+| `feature/*` | Short-lived, issue-driven branches; deploy nothing |
 
 Mandatory flow:
 1. Create/confirm a GitHub issue first.
@@ -19,7 +19,7 @@ Mandatory flow:
    - Example: `feature/10-hf-model-strategy`
 3. Open PR from `feature/*` to `develop` with issue link.
 4. Require CI green before merge.
-5. Merge `develop` to `main` only for planned releases.
+5. Merge `develop` to `main` only for planned releases. This merge ships straight to production, so it requires explicit human approval.
 
 Direct commits to `develop` should be avoided except urgent hotfixes.
 
@@ -49,25 +49,28 @@ Additionally, PRs run `.github/workflows/ai-review.yml`:
 
 ## CD pipeline
 
-CD is split into two explicit lanes. **No other branches deploy.**
+CD has a single explicit lane. **No other branches deploy.**
 
-### Dev lane
-- Branch: `develop`
-- Workflow: `.github/workflows/deploy-dev.yml`
-- Project: `cmi-notebooks-dev`
-- URL: [https://cmi-notebooks-dev.vercel.app](https://cmi-notebooks-dev.vercel.app)
-
-### Prod lane
+### Prod lane (the only lane)
 - Branch: `main` (and manual dispatch)
 - Workflow: `.github/workflows/deploy-prod.yml`
 - Project: `cmi-notebooks`
 - URL: [https://cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app)
 
-### Feature branch previews: DISABLED
+### All other branches: NO DEPLOYMENT
 
-`vercel.json` disables Vercel Git integration for `feature/*`, `fix/*`, and `hotfix/*` branches. Pushing these branches will NOT create Vercel preview deployments. To deploy for testing, merge into `develop`.
+`vercel.json` disables Vercel Git integration for `develop`, `feature/*`, `fix/*`, and `hotfix/*` branches. Pushing these branches will NOT create Vercel deployments. `develop` is a code-only integration branch.
 
-This separates integration velocity from production stability and avoids wasting Vercel deployment quota on throwaway previews.
+This keeps a single production surface and avoids wasting Vercel deployment quota on throwaway previews.
+
+### Verification without a staging environment
+
+There is no deployed pre-production environment, so verification happens locally and in CI:
+- `npm test` and `npm run build` must pass before opening a `develop` to `main` PR.
+- Exercise changed API routes against localhost via `npm run dev`.
+- Smoke-test [https://cmi-notebooks.vercel.app](https://cmi-notebooks.vercel.app) after the release lands.
+
+`main` is now the entire blast radius, so the `develop` to `main` merge requires explicit human approval.
 
 ## Environment and secrets
 
@@ -78,10 +81,9 @@ Set secrets in Vercel project settings:
 No secrets should be committed to git.
 
 Set secrets in GitHub repository settings:
-- `HF_TOKEN` (for AI PR review workflow)
+- `HF_REVIEW_TOKEN` (AI PR review workflow only — kept separate from the runtime analyst token)
 - `VERCEL_TOKEN`
 - `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID_DEV`
 - `VERCEL_PROJECT_ID_PROD`
 
 ## Agile operating rhythm
@@ -114,8 +116,7 @@ If protection settings are unavailable on the current plan, keep policy enforced
 - PR template
 - mandatory issue linkage
 - CI + AI review workflows on every PR
-- separate dev/prod deployment workflows
+- a single production deployment workflow gated on `main`
 
 For production-grade governance, configure GitHub Environment protection:
-- `development` environment: no approvals
 - `production` environment: required approvers + restricted deployment branches (`main`)

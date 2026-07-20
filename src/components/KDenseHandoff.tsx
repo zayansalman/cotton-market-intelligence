@@ -34,7 +34,17 @@ export default function KDenseHandoff({
       z_score_1y: benchmarks.z_score_1y,
       vol_30d_ann: benchmarks.vol_30d_ann,
     };
-    const encoded = btoa(JSON.stringify(context));
+    // btoa is Latin1-only, so encode as UTF-8 bytes first (non-ASCII origins,
+    // etc. would otherwise throw). Then percent-encode the base64 so its
+    // "+", "/", "=" characters survive intact inside the query string.
+    // Consumer contract: JSON.parse over a UTF-8 decode of atob(param), where
+    // `param` has already been percent-decoded (URLSearchParams.get does this
+    // automatically) — i.e. decodeURIComponent -> atob -> UTF-8 decode.
+    const json = JSON.stringify(context);
+    const utf8Bytes = new TextEncoder().encode(json);
+    let binary = "";
+    for (const byte of utf8Bytes) binary += String.fromCharCode(byte);
+    const encoded = encodeURIComponent(btoa(binary));
     window.open(`${baseUrl}?cmi_context=${encoded}`, "_blank");
   };
 

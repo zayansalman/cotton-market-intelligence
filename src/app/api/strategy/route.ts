@@ -14,6 +14,7 @@ import {
 import { parseStrategyRequest } from "@/lib/schemas/strategy-request";
 import { safeParseBody, safeErrorResponse } from "@/lib/api-security";
 import { checkAiQuota, recordAiUsage } from "@/lib/usage-quota";
+import { reserveGlobalAiBudget } from "@/lib/ai-budget";
 import { checkAbuse, abuseBlockedResponse } from "@/lib/abuse-protection";
 import { computeUnifiedSignal } from "@/lib/engine/unified-signal";
 import type { UnifiedSignal } from "@/lib/engine/unified-signal";
@@ -25,6 +26,14 @@ import { cacheKey } from "@/lib/cache-key";
 
 type StrategyProvider = "huggingface" | "heuristic";
 type SupabaseClientInstance = NonNullable<ReturnType<typeof getSupabase>>;
+
+/**
+ * Total wall-clock budget for all hosted-AI work in one strategy request
+ * (sentiment + strategy synthesis), shared via one deadline. Kept under the
+ * 60s Vercel maxDuration so a provider hang yields to the heuristic fallback
+ * instead of being killed mid-flight (500).
+ */
+const STRATEGY_LLM_BUDGET_MS = 45_000;
 
 interface AnalystMarketForecast {
   current_price: number;
@@ -223,16 +232,36 @@ function buildStrategyCacheInput({
   };
 }
 
+const VALID_STRATEGY_SIGNALS = new Set<string>([
+  "STRONG_BUY",
+  "BUY",
+  "HOLD",
+  "AVOID",
+]);
+
 function isStrategyPayload(value: unknown): value is Strategy {
   if (!value || typeof value !== "object") return false;
-  const payload = value as Partial<Strategy>;
-  return (
-    typeof payload.signal === "string" &&
-    typeof payload.confidence === "number" &&
-    typeof payload.executive_summary === "string" &&
-    Array.isArray(payload.monthly_plan) &&
-    Array.isArray(payload.risk_factors) &&
-    Array.isArray(payload.next_actions)
+  const payload = value as Partial<Strategy> & { monthly_plan?: unknown };
+  if (
+    typeof payload.signal !== "string" ||
+    !VALID_STRATEGY_SIGNALS.has(payload.signal)
+  ) {
+    return false;
+  }
+  if (typeof payload.confidence !== "number" || !Number.isFinite(payload.confidence)) {
+    return false;
+  }
+  if (typeof payload.executive_summary !== "string") return false;
+  if (!Array.isArray(payload.risk_factors) || !Array.isArray(payload.next_actions)) {
+    return false;
+  }
+  // monthly_plan must be a non-empty array of objects — the client and cache
+  // both iterate it, and mapSignalToReturn/UI depend on a valid signal enum.
+  if (!Array.isArray(payload.monthly_plan) || payload.monthly_plan.length === 0) {
+    return false;
+  }
+  return payload.monthly_plan.every(
+    (entry) => Boolean(entry) && typeof entry === "object"
   );
 }
 
@@ -293,7 +322,10 @@ async function writeStrategyCache({
   } catch { /* Strategy cache writes are non-fatal. */ }
 }
 
-async function runHuggingFaceStrategy(userMsg: string): Promise<Strategy | null> {
+async function runHuggingFaceStrategy(
+  userMsg: string,
+  deadlineAt: number
+): Promise<Strategy | null> {
   const { hfChatCompletion, parseJsonResponse } = await import("@/lib/hf/client");
 
   const text = await hfChatCompletion({
@@ -303,17 +335,22 @@ async function runHuggingFaceStrategy(userMsg: string): Promise<Strategy | null>
     ],
     max_tokens: 750,
     temperature: 0.2,
+    deadlineAt,
   });
 
   if (!text) return null;
 
   const parsed = parseJsonResponse(text);
   if (!parsed) return null;
-  return {
+  const candidate = {
     ...(parsed as Omit<Strategy, "source" | "provider">),
-    source: "ai",
-    provider: "huggingface",
+    source: "ai" as const,
+    provider: "huggingface" as const,
   };
+  // Validate the model's JSON BEFORE it is returned to the user or written to
+  // the shared cache. Malformed output otherwise gets served and then pinned
+  // in Supabase, permanently defeating the cache for that key.
+  return isStrategyPayload(candidate) ? candidate : null;
 }
 
 export async function POST(req: Request) {
@@ -380,6 +417,24 @@ export async function POST(req: Request) {
       marketForecast
     );
 
+    // Check the AI cost quota up front so the (paid) sentiment inference below
+    // is also gated by it — previously sentiment ran before this check and
+    // bypassed the budget. Shared LLM deadline keeps the whole chain under the
+    // Vercel maxDuration so a provider hang degrades to heuristic, not a 500.
+    const quota = checkAiQuota(req);
+    let aiAllowed = provider !== "heuristic" && !quota.degraded_to_heuristic;
+    // Durable, cross-instance global AI budget (cache miss confirmed above).
+    if (aiAllowed) {
+      const budget = await reserveGlobalAiBudget(supabase);
+      if (!budget.allowed) {
+        aiAllowed = false;
+        quota.degraded_to_heuristic = true;
+        quota.reason = quota.reason ?? "Global daily AI budget reached.";
+      }
+    }
+    const allHeaders = { ...rateLimit.headers, ...quota.headers };
+    const llmDeadlineAt = Date.now() + STRATEGY_LLM_BUDGET_MS;
+
     // --- Compute unified signal (non-blocking) ---
     let unifiedSignal: UnifiedSignal | null = null;
     try {
@@ -395,18 +450,22 @@ export async function POST(req: Request) {
       // `/api/prediction` already performs the expensive sentiment/news/LLM
       // synthesis. Reusing that evidence keeps strategy generation fast and
       // prevents roadmap calls from timing out on duplicate HF analysis.
+      // Only run the fallback headline analysis when there is no forecast to
+      // reuse AND the AI budget still allows a paid call.
       const forecastSentimentScore = sentimentScoreFromForecast(marketForecast);
-      const shouldRunFallbackHeadlineAnalysis = !marketForecast;
+      const shouldRunFallbackHeadlineAnalysis = !marketForecast && aiAllowed;
       const [sentimentResult] = shouldRunFallbackHeadlineAnalysis
         ? await Promise.allSettled([
             analyzeHeadlineSentiment(
-              headlines.slice(0, 10).map(h => ({ title: h.title, summary: h.summary ?? "" }))
+              headlines.slice(0, 10).map(h => ({ title: h.title, summary: h.summary ?? "" })),
+              { deadlineAt: llmDeadlineAt }
             ),
           ])
         : [];
 
       const sentiment =
         sentimentResult?.status === "fulfilled" ? sentimentResult.value : null;
+      if (sentiment) recordAiUsage(req);
       const newsAnalysis = null;
 
       unifiedSignal = computeUnifiedSignal({
@@ -428,9 +487,6 @@ export async function POST(req: Request) {
       });
     } catch { /* non-fatal */ }
 
-    const quota = checkAiQuota(req);
-    const allHeaders = { ...rateLimit.headers, ...quota.headers };
-
     // If quota exhausted, skip AI and go straight to heuristic
     if (provider !== "heuristic" && quota.degraded_to_heuristic) {
       console.warn(`[strategy] Quota exceeded for request — degrading to heuristic. Reason: ${quota.reason}`);
@@ -451,7 +507,7 @@ export async function POST(req: Request) {
     }
 
     if (provider === "huggingface" && process.env.HF_TOKEN) {
-      const strategy = await runHuggingFaceStrategy(userMsg);
+      const strategy = await runHuggingFaceStrategy(userMsg, llmDeadlineAt);
       if (strategy) {
         recordAiUsage(req);
         const responsePayload = attachUnifiedSignalFields(

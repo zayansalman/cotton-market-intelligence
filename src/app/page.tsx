@@ -40,7 +40,7 @@ export default function Home() {
     fetchForecast,
   } = useForecast(bm?.price_date);
 
-  const { strategy, generating, generateStrategy } = useStrategy({
+  const { strategy, generating, generateStrategy, generatedInput } = useStrategy({
     priceData,
     headlines,
     landedCost: null,
@@ -68,9 +68,17 @@ export default function Home() {
   }, [priceData, timeframe]);
 
   const handleGenerate = () => {
-    if (advancedMode && !validate()) return;
+    // Validate in BOTH modes — basic mode can still produce an out-of-range
+    // tonnes/months (e.g. a cleared field = 0), which the schema must catch
+    // client-side so the user gets immediate feedback instead of a silent
+    // server rejection.
+    if (!validate()) return;
     generateStrategy();
   };
+
+  // The results header must reflect the inputs that PRODUCED the current plan,
+  // not whatever the user has since typed into the form.
+  const resultsInput = generatedInput ?? input;
 
   if (loading) {
     return (
@@ -334,10 +342,10 @@ export default function Home() {
             <StrategyResults
               strategy={strategy}
               headlines={headlines}
-              tonnage={input.demand.required_tonnes}
-              months={input.demand.planning_horizon_months}
+              tonnage={resultsInput.demand.required_tonnes}
+              months={resultsInput.demand.planning_horizon_months}
               benchmarks={bm}
-              purchaserInput={input}
+              purchaserInput={resultsInput}
             />
           ) : (
             !generating && (

@@ -90,4 +90,69 @@ describe("heuristicStrategyV2", () => {
     const result = heuristicStrategyV2(input, MOCK_BM);
     expect(result.market_analysis).toContain("Binding constraints");
   });
+
+  // ---- FIX #1: absolute receipt-capacity enforcement -------------------
+
+  it("caps every month at the receipt capacity when the plan is feasible", () => {
+    // 1500t required, 300t/mo × 6mo = 1800t receivable → feasible, but the
+    // urgent front-load pushes early months above the 300t cap and must be
+    // clipped + redistributed.
+    const input: PurchaserInput = {
+      demand: { required_tonnes: 1500, planning_horizon_months: 6 },
+      timeline: {
+        urgency_level: "urgent",
+        max_monthly_receipt_capacity_tonnes: 300,
+      },
+    };
+    const result = heuristicStrategyV2(input, MOCK_BM);
+
+    // No month may exceed the cap when the plan is feasible.
+    for (const p of result.monthly_plan) {
+      expect(p.tonnes).toBeLessThanOrEqual(300);
+    }
+    // A feasible plan still delivers the full required tonnage.
+    const totalTonnes = result.monthly_plan.reduce((s, p) => s + p.tonnes, 0);
+    expect(totalTonnes).toBe(1500);
+    const totalPct = result.monthly_plan.reduce((s, p) => s + p.pct, 0);
+    expect(totalPct).toBeGreaterThan(98);
+    expect(totalPct).toBeLessThan(102);
+    // Front-loading is clipped, not inverted: early months are ≥ later months.
+    const t = result.monthly_plan.map((p) => p.tonnes);
+    expect(t[0]).toBeGreaterThanOrEqual(t[t.length - 1]);
+    // Honestly flagged as clipping peak pacing.
+    expect(
+      result.binding_constraints.some((c) => c.includes("Receipt capacity"))
+    ).toBe(true);
+  });
+
+  it("surfaces infeasibility (never exceeds cap) when demand exceeds capacity", () => {
+    // 3000t required, 300t/mo × 6mo = 1800t receivable → infeasible.
+    const input: PurchaserInput = {
+      demand: { required_tonnes: 3000, planning_horizon_months: 6 },
+      timeline: {
+        urgency_level: "urgent",
+        max_monthly_receipt_capacity_tonnes: 300,
+      },
+    };
+    const result = heuristicStrategyV2(input, MOCK_BM);
+
+    // Every month pinned at (never above) the cap — the max physically receivable.
+    for (const p of result.monthly_plan) {
+      expect(p.tonnes).toBeLessThanOrEqual(300);
+    }
+    // Plan does not pretend to deliver the full required tonnage.
+    const totalTonnes = result.monthly_plan.reduce((s, p) => s + p.tonnes, 0);
+    expect(totalTonnes).toBe(1800);
+    // Infeasibility surfaced as a binding constraint + accurate shortfall risk.
+    expect(
+      result.binding_constraints.some((c) => c.includes("Receipt capacity"))
+    ).toBe(true);
+    expect(
+      result.constraint_risks.some((r) =>
+        r.includes("exceeds total receipt capacity")
+      )
+    ).toBe(true);
+    // Not comfortably feasible.
+    expect(result.plan_feasibility_score).toBeLessThanOrEqual(25);
+  });
 });

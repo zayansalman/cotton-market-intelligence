@@ -58,6 +58,52 @@ describe("parseStrategyRequest", () => {
         expect(result.data.purchaserInput.quality).toBeUndefined();
       }
     });
+
+    it("rejects an out-of-range legacy months value (DoS guard)", () => {
+      const result = parseStrategyRequest({
+        tonnage: 1,
+        months: 1_000_000_000,
+        benchmarks: MOCK_BENCHMARKS,
+        headlines: [],
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.errors.some((e) => e.field === "months")).toBe(true);
+      }
+    });
+
+    it("rejects NaN / non-finite legacy months", () => {
+      const result = parseStrategyRequest({
+        tonnage: 100,
+        months: Number.NaN,
+        benchmarks: MOCK_BENCHMARKS,
+        headlines: [],
+      });
+      expect(result.ok).toBe(false);
+    });
+
+    it("rejects zero / negative legacy tonnage", () => {
+      const result = parseStrategyRequest({
+        tonnage: 0,
+        months: 6,
+        benchmarks: MOCK_BENCHMARKS,
+        headlines: [],
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.errors.some((e) => e.field === "tonnage")).toBe(true);
+      }
+    });
+
+    it("rejects fractional legacy months", () => {
+      const result = parseStrategyRequest({
+        tonnage: 100,
+        months: 3.5,
+        benchmarks: MOCK_BENCHMARKS,
+        headlines: [],
+      });
+      expect(result.ok).toBe(false);
+    });
   });
 
   describe("V2 payload", () => {

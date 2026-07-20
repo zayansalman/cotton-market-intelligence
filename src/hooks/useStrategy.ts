@@ -28,6 +28,51 @@ export interface StrategyRequestBody {
   marketForecast?: unknown;
 }
 
+/**
+ * Distribute `total` whole units across buckets proportional to `weights`,
+ * guaranteeing the result sums to exactly `total` (largest-remainder /
+ * Hamilton apportionment). Prevents rounded tonnes/pct from drifting off
+ * the required tonnage or 100%.
+ */
+export function largestRemainder(weights: number[], total: number): number[] {
+  const sum = weights.reduce((s, w) => s + (w > 0 ? w : 0), 0);
+  if (sum <= 0 || total <= 0) return weights.map(() => 0);
+  const raw = weights.map((w) => ((w > 0 ? w : 0) / sum) * total);
+  const floors = raw.map((r) => Math.floor(r));
+  let remainder = total - floors.reduce((s, v) => s + v, 0);
+  const order = raw
+    .map((r, i) => ({ i, frac: r - Math.floor(r) }))
+    .sort((a, b) => b.frac - a.frac);
+  const result = [...floors];
+  for (let k = 0; k < order.length && remainder > 0; k += 1) {
+    result[order[k].i] += 1;
+    remainder -= 1;
+  }
+  return result;
+}
+
+async function readStrategyError(res: Response): Promise<string> {
+  if (res.status === 429) {
+    return "Rate limit reached — please wait a moment and try again.";
+  }
+  try {
+    const body = (await res.json()) as {
+      error?: string;
+      errors?: Array<{ field?: string; reason?: string }>;
+    };
+    if (body?.errors?.length) {
+      return body.errors
+        .map((e) => [e.field, e.reason].filter(Boolean).join(": "))
+        .filter(Boolean)
+        .join("; ");
+    }
+    if (body?.error) return body.error;
+  } catch {
+    /* fall through to generic message */
+  }
+  return `Strategy generation failed (HTTP ${res.status}).`;
+}
+
 export function buildStrategyRequestBody({
   benchmarks,
   headlines,
@@ -61,10 +106,16 @@ export function useStrategy({
 }: UseStrategyDeps) {
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [generating, setGenerating] = useState(false);
+  // Snapshot of the purchaser input that produced `strategy`, so the results
+  // header stays consistent with the plan even after the user edits the form.
+  const [generatedInput, setGeneratedInput] = useState<PurchaserInput | null>(
+    null
+  );
 
   const generateStrategy = useCallback(async () => {
     if (!priceData) return;
     setGenerating(true);
+    setError(null);
     try {
       const marketForecast =
         cachedMarketForecast ??
@@ -87,14 +138,42 @@ export function useStrategy({
         const data: Strategy = await res.json();
         const totalPct = data.monthly_plan.reduce((s, p) => s + p.pct, 0);
         const tonnage = purchaserInput.demand.required_tonnes;
-        if (totalPct > 0) {
-          data.monthly_plan = data.monthly_plan.map((p) => ({
+        // The engine (heuristic path) already produces authoritative monthly
+        // tonnes — which may be intentionally capped BELOW the required total
+        // when receipt capacity cannot absorb the volume. Trust those: round
+        // them to sum to the engine's total (never re-inflate past the cap)
+        // and derive pct FROM tonnes so the two are internally consistent.
+        // Only the AI path returns pct without tonnes; there we apportion the
+        // required tonnage by pct.
+        const hasEngineTonnes = data.monthly_plan.every(
+          (p) => typeof p.tonnes === "number" && Number.isFinite(p.tonnes)
+        );
+        if (hasEngineTonnes) {
+          const tonnesRaw = data.monthly_plan.map((p) => p.tonnes);
+          const total = tonnesRaw.reduce((s, v) => s + v, 0);
+          const tonnesAlloc = largestRemainder(tonnesRaw, Math.round(total));
+          const pctTenths = largestRemainder(tonnesRaw, 1000);
+          data.monthly_plan = data.monthly_plan.map((p, i) => ({
             ...p,
-            pct: Math.round((p.pct / totalPct) * 1000) / 10,
-            tonnes: Math.round((tonnage * p.pct) / totalPct),
+            pct: total > 0 ? pctTenths[i] / 10 : p.pct,
+            tonnes: tonnesAlloc[i],
+          }));
+        } else if (totalPct > 0) {
+          const weights = data.monthly_plan.map((p) => p.pct);
+          // Apportion so tonnes sum to exactly the required tonnage and pct
+          // (in tenths) sums to exactly 100.0.
+          const tonnesAlloc = largestRemainder(weights, Math.round(tonnage));
+          const pctTenths = largestRemainder(weights, 1000);
+          data.monthly_plan = data.monthly_plan.map((p, i) => ({
+            ...p,
+            pct: pctTenths[i] / 10,
+            tonnes: tonnesAlloc[i],
           }));
         }
         setStrategy(data);
+        setGeneratedInput(purchaserInput);
+      } else {
+        setError(await readStrategyError(res));
       }
     } catch {
       setError("Strategy generation failed.");
@@ -103,5 +182,5 @@ export function useStrategy({
     }
   }, [priceData, headlines, landedCost, cachedMarketForecast, purchaserInput, setError]);
 
-  return { strategy, generating, generateStrategy };
+  return { strategy, generating, generateStrategy, generatedInput };
 }

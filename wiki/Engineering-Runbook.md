@@ -8,7 +8,7 @@ Use this runbook to:
 - onboard quickly in any environment
 - follow the expected branch and release flow
 - understand CI/CD behavior
-- deploy safely to Vercel dev and prod
+- deploy safely to Vercel production
 - recover fast if a deployment fails
 
 ## 2) Tooling baseline
@@ -36,8 +36,8 @@ If no AI keys are configured, strategy generation still works via deterministic 
 ## 4) Branching and PR policy
 
 Branch model:
-- `main`: production only
-- `develop`: integration branch
+- `main`: production only, and the only branch that deploys
+- `develop`: code-only integration branch, deploys nothing
 - `feature/*`: issue-driven implementation branches
 
 Required flow:
@@ -64,52 +64,54 @@ CI job does:
 Success criteria:
 - build passes (type and compile-safe for app + API routes)
 
-## 6) CD behavior (Vercel lanes)
+## 6) CD behavior (single Vercel lane)
 
-### Dev lane
-- Workflow: `.github/workflows/deploy-dev.yml`
-- Trigger: push to `develop` (or manual dispatch)
-- GitHub environment: `development`
-- Vercel project secret used: `VERCEL_PROJECT_ID_DEV`
-- URL: `https://cmi-notebooks-dev.vercel.app`
+There is exactly one deployed environment. The separate dev Vercel project has been retired and deleted, and `.github/workflows/deploy-dev.yml` has been removed — only `deploy-prod.yml` remains.
 
-### Prod lane
+### Prod lane (the only lane)
 - Workflow: `.github/workflows/deploy-prod.yml`
 - Trigger: push to `main` (or manual dispatch with ref)
 - GitHub environment: `production`
+- Vercel project: `cmi-notebooks`
 - Vercel project secret used: `VERCEL_PROJECT_ID_PROD`
 - URL: `https://cmi-notebooks.vercel.app`
 
-### Preview deployments (DISABLED for feature branches)
-
-`vercel.json` explicitly disables Vercel's Git integration preview builds for `feature/*`, `fix/*`, and `hotfix/*` branches. Only `main` and `develop` trigger Vercel deployments.
-
-**DO NOT push feature branches expecting a Vercel preview.** The correct flow is:
-1. Work on `feature/*` branch
-2. Merge into `develop`
-3. `develop` push triggers dev deployment automatically
-4. Validate on `cmi-notebooks-dev.vercel.app`
-
-Both deploy workflows:
-1. validate required Vercel secrets
-2. install dependencies
-3. install Vercel CLI
+The deploy workflow:
+1. validates required Vercel secrets
+2. installs dependencies
+3. installs Vercel CLI
 4. `vercel pull`
 5. `vercel build --prod`
 6. `vercel deploy --prebuilt --prod`
+
+### Branches that deploy nothing
+
+`vercel.json` sets `git.deploymentEnabled` to `true` for `main` only; `develop`, `feature/*`, `fix/*`, and `hotfix/*` are all `false`. `main` is the only branch that triggers a Vercel deployment.
+
+**DO NOT push any branch other than `main` expecting a deployment.** The correct flow is:
+1. Work on `feature/*` branch
+2. Merge into `develop` (integration only — nothing deploys)
+3. Verify locally and in CI: `npm test` and `npm run build` must pass, and changed API routes must be exercised against `localhost` via `npm run dev`
+4. Open a `develop` -> `main` release PR, get explicit human approval, then merge to ship to production
+5. Smoke-test `https://cmi-notebooks.vercel.app` after the release lands
+
+Because there is no staging environment, `main` is the blast radius. The `develop` -> `main` merge requires explicit human approval.
 
 ## 7) Required secrets and where they live
 
 GitHub repository secrets:
 - `VERCEL_TOKEN`
 - `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID_DEV`
 - `VERCEL_PROJECT_ID_PROD`
-- `HF_TOKEN` (for AI review workflow, if enabled)
+- `HF_REVIEW_TOKEN` (AI PR review workflow only — deliberately separate from the runtime analyst token, so the two rotate independently)
 
-If deploy workflows skip with a warning about invalid `VERCEL_TOKEN`, rotate the token in GitHub secrets and re-run the workflow.
+`VERCEL_PROJECT_ID_DEV` was deleted along with the retired dev project. A stale `HF_TOKEN`
+repository secret was also deleted — no workflow consumed it; `ai-review.yml` reads
+`HF_REVIEW_TOKEN`. The runtime `HF_TOKEN` belongs on Vercel, not in GitHub secrets.
 
-Vercel project env vars (set per project/environment):
+If the deploy workflow skips with a warning about invalid `VERCEL_TOKEN`, rotate the token in GitHub secrets and re-run the workflow.
+
+Vercel env vars (set on the single `cmi-notebooks` project):
 - `HF_TOKEN` (if strategy path depends on Hugging Face)
 - `HF_STRATEGY_MODEL` (optional override)
 - `STRATEGY_MODEL_PROVIDER` (`auto` / `huggingface` / `heuristic`)
@@ -145,11 +147,12 @@ Rule: never commit secrets to git.
 ## 8) Release process (recommended)
 
 1. Feature branches merge into `develop`.
-2. Validate on dev deployment.
-3. Open release PR: `develop` -> `main`.
-4. Get approval for production release.
-5. Merge to `main` to trigger prod deploy.
-6. Smoke test production:
+2. Verify locally and in CI — `npm test` and `npm run build` must pass before the release PR.
+3. Exercise changed API routes against `localhost` via `npm run dev`.
+4. Open release PR: `develop` -> `main`.
+5. Get explicit human approval for the production release (merging to `main` ships straight to prod).
+6. Merge to `main` to trigger prod deploy.
+7. Smoke test production:
    - homepage load
    - `/api/prices` returns data
    - `/api/headlines` returns data
@@ -174,10 +177,10 @@ When switching IDE/laptop/teammate:
    - `wiki/Engineering-Runbook.md` (this file)
 3. Confirm current release status:
    - latest `develop` PRs
-   - latest successful `deploy-dev` and `deploy-prod` runs
+   - latest successful `deploy-prod` run
 4. Confirm env access:
    - GitHub secrets present
-   - Vercel env vars present in dev/prod projects
+   - Vercel env vars present on the `cmi-notebooks` project
 5. Resume from issue-linked feature branch naming convention.
 
 ## 11) Ownership updates

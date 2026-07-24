@@ -698,13 +698,19 @@ export async function generateMarketPrediction({
   allowAi = true,
   llmBudgetMs = DEFAULT_PREDICTION_LLM_BUDGET_MS,
 }: GenerateMarketPredictionInput): Promise<GenerateMarketPredictionResult> {
+  // Shared deadline across every hosted-AI call in this request so the total
+  // never exceeds the serverless function budget (falls back instead of 500).
+  // Anchored at request start — BEFORE fetchPrices — so the budget is a total
+  // AI wall-clock ceiling, not a window that begins only after prices land.
+  // If it started after fetchPrices (which can take its full 10s cap), a slow
+  // price fetch would push AI work to ~55s and the synchronous model-stack
+  // training that follows could tip the function over its 60s maxDuration.
+  const llmDeadlineAt = Date.now() + llmBudgetMs;
+
   const pricesData = await deps.fetchPrices();
   const bm = pricesData?.benchmarks;
   if (!bm) throw new PredictionMarketDataUnavailableError();
 
-  // Shared deadline across every hosted-AI call in this request so the total
-  // never exceeds the serverless function budget (falls back instead of 500).
-  const llmDeadlineAt = Date.now() + llmBudgetMs;
   let aiUsed = false;
 
   const currentPrice = bm.current_price;

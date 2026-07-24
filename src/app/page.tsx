@@ -5,6 +5,7 @@ import { useMarketData } from "@/hooks/useMarketData";
 import { useStrategy } from "@/hooks/useStrategy";
 import { usePurchaserInput } from "@/hooks/usePurchaserInput";
 import PriceChart from "@/components/PriceChart";
+import PredictedVsActualChart from "@/components/PredictedVsActualChart";
 import MarketMetrics from "@/components/MarketMetrics";
 import StrategyResults from "@/components/StrategyResults";
 import BasicBrief from "@/components/procurement/BasicBrief";
@@ -34,7 +35,7 @@ export default function Home() {
     forecast,
     marketForecast,
     attribution,
-    previousForecasts,
+    predictionHistory,
     predictionPerformance,
     forecastLoading,
     fetchForecast,
@@ -249,9 +250,11 @@ export default function Home() {
                 prices={displayedPrices}
                 benchmarks={priceData.benchmarks}
                 forecast={forecast}
-                previousForecasts={previousForecasts}
                 predictionPerformance={predictionPerformance}
               />
+
+              {/* Predicted vs actual — resolved prediction track record as bars */}
+              <PredictedVsActualChart entries={predictionHistory} />
 
               {/* How we calculated this — full methodology breakdown */}
               {attribution && (

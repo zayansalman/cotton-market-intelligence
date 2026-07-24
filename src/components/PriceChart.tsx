@@ -51,8 +51,7 @@ interface ChartPoint {
 
 function mergeData(
   prices: PricePoint[],
-  forecast: ForecastOverlayData | undefined,
-  previousForecasts: PreviousForecastOverlayData[] | undefined
+  forecast: ForecastOverlayData | undefined
 ): ChartPoint[] {
   const points: ChartPoint[] = prices.map((p) => ({
     date: p.date,
@@ -93,48 +92,12 @@ function mergeData(
     }
   }
 
-  previousForecasts?.forEach((previousForecast, forecastIndex) => {
-    const key = `previous_forecast_${forecastIndex}`;
-    for (const forecastPoint of previousForecast.points) {
-      let chartPoint = pointByDate.get(forecastPoint.date);
-      if (!chartPoint) {
-        chartPoint = {
-          date: forecastPoint.date,
-          close: null,
-          ma50: null,
-          ma200: null,
-          forecast: null,
-          forecast_upper: null,
-          forecast_lower: null,
-        };
-        points.push(chartPoint);
-        pointByDate.set(forecastPoint.date, chartPoint);
-      }
-      chartPoint[key] = forecastPoint.predicted_price;
-    }
-  });
-
   return points.sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
-
-export interface PreviousForecastOverlayData {
-  id: string;
-  label: string;
-  as_of_date: string;
-  target_date: string;
-  model_name: string;
-  direction: "up" | "down" | "flat";
-  predicted_price: number;
-  actual_price: number | null;
-  error_pct: number | null;
-  direction_correct: boolean | null;
-  reasoning: string;
-  points: ForecastPoint[];
-}
 
 export interface PredictionPerformanceMetrics {
   total: number;
@@ -149,32 +112,21 @@ export default function PriceChart({
   prices,
   benchmarks,
   forecast,
-  previousForecasts,
   predictionPerformance,
 }: {
   prices: PricePoint[];
   benchmarks: Benchmarks;
   forecast?: ForecastOverlayData;
-  previousForecasts?: PreviousForecastOverlayData[];
   predictionPerformance?: PredictionPerformanceMetrics | null;
 }) {
   const [showMA50, setShowMA50] = useState(true);
   const [showMA200, setShowMA200] = useState(true);
   const [showForecast, setShowForecast] = useState(true);
-  const [showPreviousForecasts, setShowPreviousForecasts] = useState(true);
 
   const hasForecast = forecast && forecast.points.length > 0 && showForecast;
-  const visiblePreviousForecasts = showPreviousForecasts
-    ? previousForecasts?.slice(0, 2) ?? []
-    : [];
   // Only append forecast/future dates when the overlay is actually enabled,
   // otherwise the x-axis extends into an empty dead zone while hidden.
-  const data = mergeData(
-    prices,
-    hasForecast ? forecast : undefined,
-    visiblePreviousForecasts
-  );
-  const hasPreviousForecasts = visiblePreviousForecasts.length > 0;
+  const data = mergeData(prices, hasForecast ? forecast : undefined);
 
   // Color for forecast line based on direction
   const forecastColor =
@@ -196,19 +148,6 @@ export default function PriceChart({
             : null,
         ].filter(Boolean).join(" | ")
       : null;
-  const previousSummary = previousForecasts?.[0]
-    ? [
-        `${previousForecasts[0].label} -> ${previousForecasts[0].target_date}`,
-        `forecast $${previousForecasts[0].predicted_price.toFixed(4)}`,
-        previousForecasts[0].actual_price != null
-          ? `actual $${previousForecasts[0].actual_price.toFixed(4)}`
-          : null,
-        previousForecasts[0].error_pct != null
-          ? `${Math.abs(previousForecasts[0].error_pct).toFixed(2)}% error`
-          : null,
-      ].filter(Boolean).join(" | ")
-    : null;
-  const previousColors = ["#38bdf8", "#2dd4bf"];
 
   return (
     <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
@@ -218,7 +157,6 @@ export default function PriceChart({
           { label: "50d MA", active: showMA50, toggle: () => setShowMA50(!showMA50), color: "#ff9100" },
           { label: "200d MA", active: showMA200, toggle: () => setShowMA200(!showMA200), color: "#ff1744" },
           ...(forecast?.points.length ? [{ label: "Forecast", active: showForecast, toggle: () => setShowForecast(!showForecast), color: forecastColor }] : []),
-          ...(previousForecasts?.length ? [{ label: "Previous Forecasts", active: showPreviousForecasts, toggle: () => setShowPreviousForecasts(!showPreviousForecasts), color: "#38bdf8" }] : []),
         ].map((t) => (
           <button
             key={t.label}
@@ -252,12 +190,6 @@ export default function PriceChart({
         <div className="flex items-center gap-2 mb-2 text-xs text-zinc-400">
           <span className="w-2.5 h-2.5 rounded-full bg-sky-400" />
           <span>Stored forecast history: {performanceSummary}</span>
-        </div>
-      )}
-      {previousSummary && (
-        <div className="flex items-center gap-2 mb-2 text-xs text-zinc-400">
-          <span className="w-2.5 h-2.5 rounded-full bg-sky-400" />
-          <span>Previous forecast line: {previousSummary}</span>
         </div>
       )}
       <ResponsiveContainer width="100%" height={400}>
@@ -351,23 +283,6 @@ export default function PriceChart({
               connectNulls
             />
           )}
-
-          {/* Previous market forecast paths (toggleable) */}
-          {hasPreviousForecasts &&
-            visiblePreviousForecasts.map((previousForecast, index) => (
-              <Line
-                key={previousForecast.id}
-                type="monotone"
-                dataKey={`previous_forecast_${index}`}
-                name={previousForecast.label}
-                stroke={previousColors[index] ?? "#38bdf8"}
-                strokeWidth={2}
-                strokeDasharray="4 2"
-                dot={false}
-                activeDot={{ r: 4 }}
-                connectNulls={false}
-              />
-            ))}
 
           {/* Forecast confidence band */}
           {hasForecast && (

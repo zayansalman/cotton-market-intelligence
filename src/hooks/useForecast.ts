@@ -5,8 +5,8 @@ import type {
   ForecastOverlayData,
   ForecastPoint,
   PredictionPerformanceMetrics,
-  PreviousForecastOverlayData,
 } from "@/components/PriceChart";
+import type { PredictionHistoryEntry } from "@/components/PredictedVsActualChart";
 
 interface PredictionForecast {
   horizon: string;
@@ -61,7 +61,7 @@ export interface PredictionResponse {
 
 interface ForecastHistoryResponse {
   metrics?: PredictionPerformanceMetrics;
-  previousForecasts?: PreviousForecastOverlayData[];
+  predictions?: PredictionHistoryEntry[];
 }
 
 /** Forecast attribution — what drove the prediction and how much. */
@@ -110,7 +110,7 @@ export function useForecast(currentMarketDate?: string) {
   const [forecast, setForecast] = useState<ForecastOverlayData | undefined>();
   const [marketForecast, setMarketForecast] = useState<PredictionResponse | null>(null);
   const [attribution, setAttribution] = useState<ForecastAttribution | null>(null);
-  const [previousForecasts, setPreviousForecasts] = useState<PreviousForecastOverlayData[]>([]);
+  const [predictionHistory, setPredictionHistory] = useState<PredictionHistoryEntry[]>([]);
   const [predictionPerformance, setPredictionPerformance] =
     useState<PredictionPerformanceMetrics | null>(null);
   const [loading, setLoading] = useState(false);
@@ -122,12 +122,13 @@ export function useForecast(currentMarketDate?: string) {
     const fhRes = await fetch(`/api/forecast-history${query ? `?${query}` : ""}`).catch(() => null);
     if (!fhRes?.ok) {
       setPredictionPerformance(null);
+      setPredictionHistory([]);
       return;
     }
 
     const fhData: ForecastHistoryResponse = await fhRes.json();
     setPredictionPerformance(fhData.metrics ?? null);
-    setPreviousForecasts(fhData.previousForecasts ?? []);
+    setPredictionHistory(fhData.predictions ?? []);
   }, [currentMarketDate]);
 
   useEffect(() => {
@@ -279,7 +280,7 @@ export function useForecast(currentMarketDate?: string) {
     forecast,
     marketForecast,
     attribution,
-    previousForecasts,
+    predictionHistory,
     predictionPerformance,
     forecastLoading: loading,
     fetchForecast,
